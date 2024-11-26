@@ -42,9 +42,11 @@ int OnInit() {
    SymbolSelect("EURUSD+", true);
    SymbolSelect("AUDUSD+", true);
    SymbolSelect("GBPUSD+", true);
-   SymbolSelect("USDJPY+", true);
+   //SymbolSelect("USDJPY+", true);
    SymbolSelect("BTCUSD", true); 
    SymbolSelect("ETHUSD", true);
+   SymbolSelect("LTCUSD", true);
+
    
    PrintDebug("EA Initialized with Risk: " + DoubleToString(RISK_PERCENT, 2) + "%");
    PrintDebug("Account Balance: " + DoubleToString(AccountBalance(), 2));
