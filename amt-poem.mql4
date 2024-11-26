@@ -45,7 +45,7 @@ int OnInit() {
    //SymbolSelect("USDJPY+", true);
    SymbolSelect("BTCUSD", true); 
    SymbolSelect("ETHUSD", true);
-   SymbolSelect("LTCUSD", true);
+   //SymbolSelect("LTCUSD", true);
 
    
    PrintDebug("EA Initialized with Risk: " + DoubleToString(RISK_PERCENT, 2) + "%");
