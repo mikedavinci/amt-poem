@@ -449,25 +449,26 @@ int GetOpenPositionType(string symbol) {
 bool CloseCurrentPosition(string symbol) {
    for(int i = 0; i < OrdersTotal(); i++) {
       if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-         // Calculate current loss percentage
-         double openPrice = OrderOpenPrice();
-         double currentPrice = OrderType() == OP_BUY ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
-         double priceChange = OrderType() == OP_BUY ? currentPrice - openPrice : openPrice - currentPrice;
-         double lossPercentage = (priceChange / openPrice) * 100;
-         
-         // If loss exceeds emergency threshold, close immediately
-         if(lossPercentage <= -EMERGENCY_CLOSE_PERCENT) {
-            PrintDebug("EMERGENCY CLOSE triggered for " + OrderSymbol() + 
-                      "\nLoss: " + DoubleToString(lossPercentage, 2) + "%" +
-                      "\nClosing position immediately!");
+         if(OrderSymbol() == symbol) {
+            double closePrice = OrderType() == OP_BUY ? MarketInfo(symbol, MODE_BID) : MarketInfo(symbol, MODE_ASK);
             
-            if(!CloseCurrentPosition(OrderSymbol())) {
-               PrintDebug("CRITICAL ERROR: Failed to execute emergency close!");
+            for(int retry = 0; retry < MAX_RETRIES; retry++) {
+               bool closed = OrderClose(OrderTicket(), OrderLots(), closePrice, MAX_SLIPPAGE, OrderType() == OP_BUY ? clrRed : clrGreen);
+               if(closed) return true;
+               
+               int error = GetLastError();
+               PrintDebug("Failed to close position, attempt " + IntegerToString(retry + 1) + " of " + IntegerToString(MAX_RETRIES) +
+                         "\nError: " + IntegerToString(error) +
+                         "\nDescription: " + ErrorDescription(error));
+               
+               RefreshRates();
+               Sleep(1000);  // Wait 1 second before retry
             }
+            return false;  // Failed after all retries
          }
       }
    }
-   return false;
+   return false;  // No matching position found
 }
 
 //+------------------------------------------------------------------+
