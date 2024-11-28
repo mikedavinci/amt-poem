@@ -11,12 +11,14 @@
 extern string API_URL = "https://api.tradejourney.ai/api/alerts/mt4-forex-signals";  // API URL
 extern int    REFRESH_MINUTES = 5;                    // How often to check for new signals
 extern bool   DEBUG_MODE = true;                      // Print debug messages
-extern string TIMEFRAME = "240";                      // Timeframe parameter for API
+extern string TIMEFRAME = "60";                      // Timeframe parameter for API
 extern int    MAX_SLIPPAGE = 5;                      // Maximum allowed slippage in points
 extern int    PRICE_DIGITS = 5;                      // Decimal places for price display (5 for forex, 3 for JPY pairs)
-extern double RISK_PERCENT = 20.0;                    // Risk percentage per trade (20%)
+extern double RISK_PERCENT = 5;                    // Risk percentage per trade (5%)
 extern int    MAX_POSITIONS = 1;                     // Maximum positions per symbol
 extern int    MAX_RETRIES = 3;                       // Maximum retries for failed trades
+extern double STOP_LOSS_PERCENT = 5;              // Stop loss percentage from entry
+extern int    EMERGENCY_CLOSE_PERCENT = 10;          // Emergency close if loss exceeds this percentage
 
 // Global variables
 datetime lastCheck = 0;
@@ -64,28 +66,10 @@ void OnDeinit(const int reason) {
 //| Expert tick function                                              |
 //+------------------------------------------------------------------+
 void OnTick() {
-   if (!IsTimeToCheck()) return;
+   // First, check for any positions that need emergency closing
+   CheckEmergencyClose();
    
-   // Check all open positions for 50% loss
-   for(int i = 0; i < OrdersTotal(); i++) {
-      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-         // Calculate current loss percentage
-         double openPrice = OrderOpenPrice();
-         double currentPrice = OrderType() == OP_BUY ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
-         double priceChange = OrderType() == OP_BUY ? currentPrice - openPrice : openPrice - currentPrice;
-         double lossPercentage = (priceChange / openPrice) * 100;
-         
-         // Close position if loss is 50% or more
-         if(lossPercentage <= -50) {  // Using -50 since loss is negative
-            PrintDebug("Closing position due to 50% loss:" +
-                      "\nSymbol: " + OrderSymbol() +
-                      "\nOpen Price: " + DoubleToString(openPrice, PRICE_DIGITS) +
-                      "\nCurrent Price: " + DoubleToString(currentPrice, PRICE_DIGITS) +
-                      "\nLoss Percentage: " + DoubleToString(lossPercentage, 2) + "%");
-            CloseCurrentPosition(OrderSymbol());
-         }
-      }
-   }
+   if (!IsTimeToCheck()) return;
    
    string currentSymbol = Symbol();
    PrintDebug("Bid Price: " + DoubleToString(MarketInfo(currentSymbol, MODE_BID), 5));
@@ -184,16 +168,12 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
    double maxRiskAmount = accountBalance * (RISK_PERCENT / 100);
    
    // 2. Calculate stop loss distance in price terms
-   double stopDistance;
-   if(stopLoss == 0) {
-      // If no stop loss provided, use a default risk
-      stopDistance = entryPrice * 0.03;  // 3% of current price - tighter stop for larger positions
-      PrintDebug("No stop loss provided. Using default risk distance of 3%: " + DoubleToString(stopDistance, 8));
-   } else {
-      stopDistance = MathAbs(entryPrice - stopLoss);
-   }
+   double stopDistance = MathAbs(entryPrice - stopLoss);  // Always use the provided stop loss
    
-   if(stopDistance == 0) return 0;  // Prevent division by zero
+   if(stopDistance == 0) {
+      PrintDebug("Error: Stop loss distance cannot be zero");
+      return 0;  // Prevent division by zero and invalid trades
+   }
    
    // 3. Identify pair type
    bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || StringFind(symbol, "ETH") >= 0 || StringFind(symbol, "LTC") >= 0);
@@ -239,16 +219,15 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
                  "\nInitial Lot Size: " + DoubleToString(lotSize, 3));
    }
    
-   // 5. Ensure minimum lot size of 0.05
-   lotSize = MathMax(lotSize, 0.05);
-   
-   // 6. Round to broker's lot step
-   double lotStep = MarketInfo(symbol, MODE_LOTSTEP);
-   lotSize = MathFloor(lotSize / lotStep) * lotStep;
-   
-   // 7. Ensure within broker's limits
+   // Get broker's lot constraints
    double minLot = MarketInfo(symbol, MODE_MINLOT);
    double maxLot = MarketInfo(symbol, MODE_MAXLOT);
+   double lotStep = MarketInfo(symbol, MODE_LOTSTEP);
+   
+   // Round to broker's lot step
+   lotSize = MathFloor(lotSize / lotStep) * lotStep;
+   
+   // Ensure within broker's limits
    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
    
    // Debug output
@@ -262,64 +241,6 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
               "\nIs Crypto: " + (isCryptoPair ? "Yes" : "No"));
    
    return lotSize;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate stop loss price for 50% position reduction               |
-//+------------------------------------------------------------------+
-double CalculateStopLossPrice(string symbol, int cmd, double entryPrice) {
-   // Get the current position size and value
-   double positionSize = 0;
-   double positionValue = 0;
-   
-   for(int i = 0; i < OrdersTotal(); i++) {
-      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-         if(OrderSymbol() == symbol && OrderType() == cmd) {
-            positionSize = OrderLots();
-            positionValue = OrderLots() * entryPrice * MarketInfo(symbol, MODE_LOTSIZE);
-            break;
-         }
-      }
-   }
-   
-   if(positionSize == 0) return 0; // No position found
-   
-   // Calculate maximum loss as 50% of position value
-   double maxLossAmount = positionValue * 0.5;
-   
-   // Get tick value and calculate pip value
-   double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
-   bool isJPYPair = (StringFind(symbol, "JPY") >= 0);
-   double pipValue = tickValue * (isJPYPair ? 100 : 10000);
-   
-   // Calculate required pips for 50% reduction
-   double requiredPips = maxLossAmount / (pipValue * positionSize);
-   
-   // Convert pips to price distance
-   double priceDistance;
-   if(isJPYPair) {
-      priceDistance = requiredPips / 100;
-   } else {
-      priceDistance = requiredPips / 10000;
-   }
-   
-   // Calculate stop loss price based on position type
-   double stopLossPrice;
-   if(cmd == OP_BUY) {
-      stopLossPrice = entryPrice - priceDistance;
-   } else {
-      stopLossPrice = entryPrice + priceDistance;
-   }
-   
-   PrintDebug("Stop Loss Calculation:" +
-              "\nPosition Size: " + DoubleToString(positionSize, 2) +
-              "\nPosition Value: " + DoubleToString(positionValue, 2) +
-              "\nMax Loss Amount: " + DoubleToString(maxLossAmount, 2) +
-              "\nRequired Pips: " + DoubleToString(requiredPips, 2) +
-              "\nPrice Distance: " + DoubleToString(priceDistance, 5) +
-              "\nStop Loss Price: " + DoubleToString(stopLossPrice, 5));
-   
-   return stopLossPrice;
 }
 
 //+------------------------------------------------------------------+
@@ -343,11 +264,6 @@ void ProcessSignal(SignalData &signal) {
       return;
    }
    
-   if(!CanOpenNewPosition(signal.ticker)) {
-      PrintDebug("Risk management prevented opening new position");
-      return;
-   }
-   
    int cmd = -1;
    if (signal.action == "BUY") cmd = OP_BUY;
    else if (signal.action == "SELL") cmd = OP_SELL;
@@ -356,13 +272,18 @@ void ProcessSignal(SignalData &signal) {
       return;
    }
    
-   // Handle existing positions
+   // ALWAYS handle existing positions first
    if (HasOpenPosition(signal.ticker)) {
       int currentPositionType = GetOpenPositionType(signal.ticker);
+      bool shouldClose = false;
       
+      // Close if opposite signal or emergency threshold reached
       if ((cmd == OP_BUY && currentPositionType == OP_SELL) || 
           (cmd == OP_SELL && currentPositionType == OP_BUY)) {
-          
+          shouldClose = true;
+      }
+      
+      if(shouldClose) {
           PrintDebug("Closing existing " + (currentPositionType == OP_BUY ? "BUY" : "SELL") + 
                      " position before opening new " + signal.action + " position");
                      
@@ -376,22 +297,43 @@ void ProcessSignal(SignalData &signal) {
       }
    }
    
+   // Only check for new positions after handling existing ones
+   if(!CanOpenNewPosition(signal.ticker)) {
+      PrintDebug("Risk management prevented opening new position");
+      return;
+   }
+   
    // Get current market prices
    double ask = MarketInfo(signal.ticker, MODE_ASK);
    double bid = MarketInfo(signal.ticker, MODE_BID);
    double price = cmd == OP_BUY ? ask : bid;
    
-   // Calculate 5% stop loss
+   // Calculate stop loss using external parameter
    double sl;
    if(cmd == OP_BUY) {
-      sl = price * (1 - 0.05); // 5% below entry for buy
+      sl = price * (1 - STOP_LOSS_PERCENT/100); 
    } else {
-      sl = price * (1 + 0.05); // 5% above entry for sell
+      sl = price * (1 + STOP_LOSS_PERCENT/100);
    }
+   
+   // Verify stop loss is valid
+   if(cmd == OP_BUY && sl >= price) {
+      PrintDebug("Error: Invalid stop loss for BUY order - must be below entry price");
+      return;
+   }
+   if(cmd == OP_SELL && sl <= price) {
+      PrintDebug("Error: Invalid stop loss for SELL order - must be above entry price");
+      return;
+   }
+   
    double tp = 0;  // Take profit will be determined by opposite signal
    
-   // Calculate position size
-   double lotSize = CalculatePositionSize(signal.ticker, price, signal.stopLoss);
+   // Calculate position size based on risk
+   double lotSize = CalculatePositionSize(signal.ticker, price, sl);
+   if(lotSize == 0) {
+      PrintDebug("Error: Invalid lot size calculated");
+      return;
+   }
    
    // Debug output
    int digits;
@@ -507,45 +449,21 @@ int GetOpenPositionType(string symbol) {
 bool CloseCurrentPosition(string symbol) {
    for(int i = 0; i < OrdersTotal(); i++) {
       if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-         if(OrderSymbol() == symbol) {
-            double closePrice;
-            int orderType = OrderType();
+         // Calculate current loss percentage
+         double openPrice = OrderOpenPrice();
+         double currentPrice = OrderType() == OP_BUY ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
+         double priceChange = OrderType() == OP_BUY ? currentPrice - openPrice : openPrice - currentPrice;
+         double lossPercentage = (priceChange / openPrice) * 100;
+         
+         // If loss exceeds emergency threshold, close immediately
+         if(lossPercentage <= -EMERGENCY_CLOSE_PERCENT) {
+            PrintDebug("EMERGENCY CLOSE triggered for " + OrderSymbol() + 
+                      "\nLoss: " + DoubleToString(lossPercentage, 2) + "%" +
+                      "\nClosing position immediately!");
             
-            if(orderType == OP_BUY) {
-               closePrice = MarketInfo(symbol, MODE_BID);
-            } else if(orderType == OP_SELL) {
-               closePrice = MarketInfo(symbol, MODE_ASK);
-            } else {
-               continue;
+            if(!CloseCurrentPosition(OrderSymbol())) {
+               PrintDebug("CRITICAL ERROR: Failed to execute emergency close!");
             }
-            
-            PrintDebug("Attempting to close position:" +
-                      "\nTicket: " + IntegerToString(OrderTicket()) +
-                      "\nSymbol: " + symbol +
-                      "\nType: " + (orderType == OP_BUY ? "BUY" : "SELL") +
-                      "\nLots: " + DoubleToString(OrderLots(), 2) +
-                      "\nClose Price: " + DoubleToString(closePrice, PRICE_DIGITS));
-            
-            bool result = OrderClose(
-               OrderTicket(),
-               OrderLots(),
-               closePrice,
-               MAX_SLIPPAGE,
-               clrWhite
-            );
-            
-            if(!result) {
-               int error = GetLastError();
-               PrintDebug("Failed to close position" +
-                         "\nError: " + IntegerToString(error) +
-                         "\nDescription: " + ErrorDescription(error));
-               return false;
-            }
-            
-            PrintDebug("Successfully closed position:" +
-                      "\nSymbol: " + symbol +
-                      "\nProfit: " + DoubleToString(OrderProfit(), 2));
-            return true;
          }
       }
    }
@@ -684,4 +602,30 @@ string GetBaseSymbol(string symbol) {
       return StringSubstr(symbol, 0, plusPos);
    }
    return symbol;
+}
+
+//+------------------------------------------------------------------+
+//| Emergency close check                                             |
+//+------------------------------------------------------------------+
+void CheckEmergencyClose() {
+   for(int i = 0; i < OrdersTotal(); i++) {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+         // Calculate current loss percentage
+         double openPrice = OrderOpenPrice();
+         double currentPrice = OrderType() == OP_BUY ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
+         double priceChange = OrderType() == OP_BUY ? currentPrice - openPrice : openPrice - currentPrice;
+         double lossPercentage = (priceChange / openPrice) * 100;
+         
+         // If loss exceeds emergency threshold, close immediately
+         if(lossPercentage <= -EMERGENCY_CLOSE_PERCENT) {
+            PrintDebug("EMERGENCY CLOSE triggered for " + OrderSymbol() + 
+                      "\nLoss: " + DoubleToString(lossPercentage, 2) + "%" +
+                      "\nClosing position immediately!");
+            
+            if(!CloseCurrentPosition(OrderSymbol())) {
+               PrintDebug("CRITICAL ERROR: Failed to execute emergency close!");
+            }
+         }
+      }
+   }
 }
