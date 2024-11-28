@@ -16,7 +16,6 @@ extern int    MAX_SLIPPAGE = 5;                      // Maximum allowed slippage
 extern int    PRICE_DIGITS = 5;                      // Decimal places for price display (5 for forex, 3 for JPY pairs)
 extern double RISK_PERCENT = 20.0;                    // Risk percentage per trade (20%)
 extern int    MAX_POSITIONS = 1;                     // Maximum positions per symbol
-extern double MAX_DAILY_LOSS = 20.0;                 // Maximum daily loss percentage
 extern int    MAX_RETRIES = 3;                       // Maximum retries for failed trades
 
 // Global variables
@@ -344,12 +343,6 @@ void ProcessSignal(SignalData &signal) {
       return;
    }
    
-   // Check daily loss limit before opening new positions
-   if(IsDailyLossExceeded()) {
-      PrintDebug("Daily loss limit (" + DoubleToString(MAX_DAILY_LOSS, 1) + "%) exceeded - no new positions allowed");
-      return;
-   }
-   
    if(!CanOpenNewPosition(signal.ticker)) {
       PrintDebug("Risk management prevented opening new position");
       return;
@@ -388,8 +381,13 @@ void ProcessSignal(SignalData &signal) {
    double bid = MarketInfo(signal.ticker, MODE_BID);
    double price = cmd == OP_BUY ? ask : bid;
    
-   // No fixed stop loss or take profit - will be managed by OnTick monitoring
-   double sl = 0;
+   // Calculate 5% stop loss
+   double sl;
+   if(cmd == OP_BUY) {
+      sl = price * (1 - 0.05); // 5% below entry for buy
+   } else {
+      sl = price * (1 + 0.05); // 5% above entry for sell
+   }
    double tp = 0;  // Take profit will be determined by opposite signal
    
    // Calculate position size
@@ -483,24 +481,6 @@ bool CanOpenNewPosition(string symbol) {
    }
    if(symbolPositions >= MAX_POSITIONS) {
       PrintDebug("Maximum positions reached for " + symbol);
-      return false;
-   }
-   
-   // Check daily loss limit
-   double dailyPL = 0;
-   for(int i = 0; i < OrdersHistoryTotal(); i++) {
-      if(OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) {
-         if(OrderCloseTime() >= iTime(Symbol(), PERIOD_D1, 0)) {
-            dailyPL += OrderProfit() + OrderSwap() + OrderCommission();
-         }
-      }
-   }
-   
-   double accountEquity = AccountEquity();
-   double maxDailyLossAmount = AccountBalance() * (MAX_DAILY_LOSS / 100);
-   
-   if(dailyPL < -maxDailyLossAmount) {
-      PrintDebug("Daily loss limit reached. Current loss: $" + DoubleToString(-dailyPL, 2));
       return false;
    }
    
@@ -650,42 +630,6 @@ string ErrorDescription(int error_code) {
    }
    
    return error_string;
-}
-
-//+------------------------------------------------------------------+
-//| Check daily loss limit                                            |
-//+------------------------------------------------------------------+
-bool IsDailyLossExceeded() {
-   double totalDailyLoss = 0;
-   
-   // Calculate total profit/loss for today's closed trades
-   for(int i = 0; i < OrdersHistoryTotal(); i++) {
-      if(OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) {
-         // Check if the trade was closed today
-         if(TimeDay(OrderCloseTime()) == TimeDay(TimeCurrent()) &&
-            TimeMonth(OrderCloseTime()) == TimeMonth(TimeCurrent()) &&
-            TimeYear(OrderCloseTime()) == TimeYear(TimeCurrent())) {
-            totalDailyLoss += OrderProfit() + OrderSwap() + OrderCommission();
-         }
-      }
-   }
-   
-   // Add floating P/L from open positions
-   for(int i = 0; i < OrdersTotal(); i++) {
-      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-         totalDailyLoss += OrderProfit() + OrderSwap() + OrderCommission();
-      }
-   }
-   
-   double accountBalance = AccountBalance();
-   double maxLossAmount = accountBalance * (MAX_DAILY_LOSS / 100);
-   
-   PrintDebug("Daily Loss Check:" +
-              "\nTotal Daily P/L: $" + DoubleToString(totalDailyLoss, 2) +
-              "\nMax Loss Allowed: $" + DoubleToString(maxLossAmount, 2) +
-              "\nDaily Loss Limit: " + DoubleToString(MAX_DAILY_LOSS, 1) + "%");
-              
-   return (totalDailyLoss < -maxLossAmount);
 }
 
 //+------------------------------------------------------------------+
