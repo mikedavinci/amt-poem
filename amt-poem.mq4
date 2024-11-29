@@ -11,7 +11,7 @@
 extern string API_URL = "https://api.tradejourney.ai/api/alerts/mt4-forex-signals";  // API URL
 extern int    REFRESH_MINUTES = 5;                    // How often to check for new signals
 extern bool   DEBUG_MODE = true;                      // Print debug messages
-extern string PAPERTRAIL_HOST = "https://logs.papertrailapp.com"; // Papertrail host
+extern string PAPERTRAIL_HOST = "logs.papertrailapp.com"; // Papertrail host (without https://)
 extern string PAPERTRAIL_PORT = "26548";                  // Your Papertrail port
 extern string SYSTEM_NAME = "TradeJourney";                     // System identifier
 extern bool   ENABLE_PAPERTRAIL = true;                    // Enable/disable Papertrail logging
@@ -85,7 +85,6 @@ void SendToPapertrail(string message, string level = "INFO") {
     );
     
     string headers = "Content-Type: application/json\r\n";
-    headers += "Host: " + PAPERTRAIL_HOST + "\r\n";
     
     char post[];
     StringToCharArray(logMessage, post);
@@ -93,8 +92,10 @@ void SendToPapertrail(string message, string level = "INFO") {
     char result[];
     string resultHeaders;
     
-    string url = "https://" + PAPERTRAIL_HOST + ":" + PAPERTRAIL_PORT + "/v1/event";
+    // Construct URL without https://
+    string url = PAPERTRAIL_HOST + ":" + PAPERTRAIL_PORT + "/v1/event";
     
+    ResetLastError();
     int res = WebRequest(
         "POST",
         url,
@@ -107,7 +108,11 @@ void SendToPapertrail(string message, string level = "INFO") {
     
     if(res == -1) {
         int error = GetLastError();
-        LogError("Failed to send log to Papertrail. Error: " + IntegerToString(error));
+        if(error == 4060) {
+            MessageBox("Please enable WebRequest for " + url + "\nAdd the URL to MetaTrader -> Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.", "WebRequest Error", MB_ICONERROR);
+        }
+        Print("Failed to send log to Papertrail. Error: ", error);
+        // Continue executing EA despite logging failure
     }
 }
 
