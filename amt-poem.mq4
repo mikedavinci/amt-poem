@@ -427,8 +427,18 @@ void CheckProfitProtection() {
             // Only check positions that are currently profitable
             if(currentProfit > 0) {
                 string symbol = OrderSymbol();
+                bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || StringFind(symbol, "ETH") >= 0 || StringFind(symbol, "LTC") >= 0);
+                
                 double pointValue = MarketInfo(symbol, MODE_POINT);
-                double bufferInPoints = PROFIT_LOCK_BUFFER * 10; // Convert pips to points
+                // For crypto, we need a larger buffer since prices are much higher
+                double bufferInPoints;
+                if(isCryptoPair) {
+                    // For crypto, use a percentage-based buffer instead of pips
+                    bufferInPoints = OrderOpenPrice() * (PROFIT_LOCK_BUFFER/100);
+                } else {
+                    // For forex, use pips as before
+                    bufferInPoints = PROFIT_LOCK_BUFFER * 10; // Convert pips to points
+                }
                 
                 double currentPrice = OrderType() == OP_BUY ? 
                     MarketInfo(symbol, MODE_BID) : 
@@ -439,11 +449,19 @@ void CheckProfitProtection() {
                 
                 // If price is approaching breakeven level (within buffer), close the position
                 if(OrderType() == OP_BUY) {
-                    if(currentPrice <= breakEvenPrice + (bufferInPoints * pointValue)) {
+                    if(currentPrice <= breakEvenPrice + (isCryptoPair ? bufferInPoints : bufferInPoints * pointValue)) {
+                        PrintDebug("Profit protection triggered for " + symbol + 
+                                 "\nCurrent Price: " + DoubleToString(currentPrice, isCryptoPair ? 2 : 5) +
+                                 "\nBreak Even: " + DoubleToString(breakEvenPrice, isCryptoPair ? 2 : 5) +
+                                 "\nBuffer: " + DoubleToString(bufferInPoints, isCryptoPair ? 2 : 5));
                         CloseTradeWithProtection(OrderTicket(), "Profit protection activated");
                     }
                 } else if(OrderType() == OP_SELL) {
-                    if(currentPrice >= breakEvenPrice - (bufferInPoints * pointValue)) {
+                    if(currentPrice >= breakEvenPrice - (isCryptoPair ? bufferInPoints : bufferInPoints * pointValue)) {
+                        PrintDebug("Profit protection triggered for " + symbol + 
+                                 "\nCurrent Price: " + DoubleToString(currentPrice, isCryptoPair ? 2 : 5) +
+                                 "\nBreak Even: " + DoubleToString(breakEvenPrice, isCryptoPair ? 2 : 5) +
+                                 "\nBuffer: " + DoubleToString(bufferInPoints, isCryptoPair ? 2 : 5));
                         CloseTradeWithProtection(OrderTicket(), "Profit protection activated");
                     }
                 }
