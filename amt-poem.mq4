@@ -11,9 +11,8 @@
 extern string API_URL = "https://api.tradejourney.ai/api/alerts/mt4-forex-signals";  // API URL
 extern int    REFRESH_MINUTES = 5;                    // How often to check for new signals
 extern bool   DEBUG_MODE = true;                      // Print debug messages
-extern string PAPERTRAIL_HOST = "logs.papertrailapp.com"; // Papertrail host (without https://)
-extern string PAPERTRAIL_PORT = "26548";                  // Your Papertrail port
-extern string SYSTEM_NAME = "TradeJourney";                     // System identifier
+extern string PAPERTRAIL_HOST = "https://api.tradejourney.ai/api/alerts/log"; // API endpoint for logs
+extern string SYSTEM_NAME = "EA-TradeJourney";                     // System identifier
 extern bool   ENABLE_PAPERTRAIL = true;                    // Enable/disable Papertrail logging
 extern bool   ENABLE_PROFIT_PROTECTION = true;     // Enable/disable profit protection
 extern double PROFIT_LOCK_BUFFER = 2.0;         // Buffer before closing (2.0 pips for forex, 2.0% for crypto)
@@ -75,13 +74,30 @@ void OnDeinit(const int reason) {
 //+------------------------------------------------------------------+
 void SendToPapertrail(string message, string level = "INFO") {
     if (!ENABLE_PAPERTRAIL) return; // Skip if Papertrail is disabled
-    string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
-    string logMessage = StringFormat(
-        "{\"system\":\"%s\",\"facility\":\"MT4\",\"severity\":\"%s\",\"timestamp\":\"%s\",\"message\":\"%s\"}",
+    
+    // Convert MT4 log level to API log level
+    string apiLevel;
+    if (level == "ERROR") apiLevel = "error";
+    else if (level == "WARNING") apiLevel = "warn";
+    else if (level == "TRADE") apiLevel = "info";
+    else if (level == "DEBUG") apiLevel = "info";
+    else apiLevel = "info";
+    
+    // Create metadata with additional context
+    string metadata = StringFormat(
+        "{\"system\":\"%s\",\"timestamp\":\"%s\",\"level\":\"%s\",\"account\":\"%s\"}",
         SYSTEM_NAME,
+        TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
         level,
-        timestamp,
-        message
+        AccountNumber()
+    );
+    
+    // Create the JSON payload
+    string logMessage = StringFormat(
+        "{\"message\":\"%s\",\"level\":\"%s\",\"metadata\":%s}",
+        message,
+        apiLevel,
+        metadata
     );
     
     string headers = "Content-Type: application/json\r\n";
@@ -92,13 +108,10 @@ void SendToPapertrail(string message, string level = "INFO") {
     char result[];
     string resultHeaders;
     
-    // Construct URL without https://
-    string url = PAPERTRAIL_HOST + ":" + PAPERTRAIL_PORT + "/v1/event";
-    
     ResetLastError();
     int res = WebRequest(
         "POST",
-        url,
+        PAPERTRAIL_HOST,
         headers,
         5000,
         post,
@@ -109,10 +122,18 @@ void SendToPapertrail(string message, string level = "INFO") {
     if(res == -1) {
         int error = GetLastError();
         if(error == 4060) {
-            MessageBox("Please enable WebRequest for " + url + "\nAdd the URL to MetaTrader -> Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.", "WebRequest Error", MB_ICONERROR);
+            Print("ERROR: Please enable WebRequest for " + PAPERTRAIL_HOST);
+            Print("Add the URL to MetaTrader -> Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+            return;
         }
-        Print("Failed to send log to Papertrail. Error: ", error);
-        // Continue executing EA despite logging failure
+        
+        string errorMsg = StringFormat("Failed to send log. Error: %d, Message: %s", error, ErrorDescription(error));
+        Print(errorMsg);
+        
+        // If we failed to send a non-error log, try to send an error log about the failure
+        if(level != "ERROR") {
+            SendToPapertrail(errorMsg, "ERROR");
+        }
     }
 }
 
@@ -122,13 +143,13 @@ void SendToPapertrail(string message, string level = "INFO") {
 void PrintDebug(string message, string level = "INFO") {
     string formattedMessage = TimeToString(TimeCurrent()) + " | " + message;
     
-    // Still maintain local MT4 logging if debug mode is enabled
+    // Always send to Papertrail first
+    SendToPapertrail(message, level);
+    
+    // Then maintain local MT4 logging if debug mode is enabled
     if(DEBUG_MODE) {
         Print(formattedMessage);
     }
-    
-    // Send to Papertrail regardless of debug mode
-    SendToPapertrail(message, level);
 }
 
 //+------------------------------------------------------------------+
@@ -767,16 +788,26 @@ bool IsMarketOpen(string symbol) {
    
    // Additional check for forex market hours (not needed for crypto)
    if(StringFind(symbol, "BTC") == -1 && StringFind(symbol, "ETH") == -1 && StringFind(symbol, "LTC") == -1) {
-      int currentHour = (int)TimeHour(TimeCurrent());  // Explicit cast to int
+      datetime localTime = TimeCurrent();
+      datetime gmtTime = TimeGMT();
+      int gmtOffset = (int)((localTime - gmtTime) / 3600); // Convert seconds to hours
+      int currentHour = (int)TimeHour(localTime);
+      int gmtHour = (currentHour - gmtOffset) % 24;
+      if(gmtHour < 0) gmtHour += 24;
+      
       // Check if it's between Friday 22:00 and Sunday 22:00 GMT
-      if(dayOfWeek == 5 && currentHour >= 22) {
-         LogDebug("Market closed (Friday evening) for " + symbol);
+      if(dayOfWeek == 5 && gmtHour >= 22) {
+         LogDebug("Market closed (Friday evening) for " + symbol + " GMT Hour: " + IntegerToString(gmtHour));
          return false;
       }
-      if(dayOfWeek == 0 && currentHour < 22) {
-         LogDebug("Market closed (Sunday) for " + symbol);
+      if(dayOfWeek == 0 && gmtHour < 22) {
+         LogDebug("Market closed (Sunday) for " + symbol + " GMT Hour: " + IntegerToString(gmtHour));
          return false;
       }
+      
+      LogDebug("Market is open. Day: " + IntegerToString(dayOfWeek) + 
+               " Local Hour: " + IntegerToString(currentHour) + 
+               " GMT Hour: " + IntegerToString(gmtHour));
    }
    
    return true;
@@ -802,7 +833,9 @@ void CheckEmergencyClose() {
       if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
          // Calculate current loss percentage
          double openPrice = OrderOpenPrice();
-         double currentPrice = OrderType() == OP_BUY ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
+         double currentPrice = OrderType() == OP_BUY ? 
+            MarketInfo(OrderSymbol(), MODE_BID) : 
+            MarketInfo(OrderSymbol(), MODE_ASK);
          double priceChange = OrderType() == OP_BUY ? currentPrice - openPrice : openPrice - currentPrice;
          double lossPercentage = (priceChange / openPrice) * 100;
          
