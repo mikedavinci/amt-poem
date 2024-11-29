@@ -19,6 +19,8 @@ extern int    MAX_POSITIONS = 1;                     // Maximum positions per sy
 extern int    MAX_RETRIES = 3;                       // Maximum retries for failed trades
 extern double STOP_LOSS_PERCENT = 5;              // Stop loss percentage from entry
 extern int    EMERGENCY_CLOSE_PERCENT = 10;          // Emergency close if loss exceeds this percentage
+extern bool   ENABLE_PROFIT_PROTECTION = true;     // Enable/disable profit protection
+extern double PROFIT_LOCK_BUFFER = 2.0;         // Pips buffer before closing (default 2.0 pips)
 
 // Global variables
 datetime lastCheck = 0;
@@ -88,6 +90,8 @@ void OnTick() {
    }
    
    lastCheck = TimeCurrent();
+   
+   CheckProfitProtection();
 }
 
 //+------------------------------------------------------------------+
@@ -408,6 +412,72 @@ void ProcessSignal(SignalData &signal) {
                  "\nPrice: " + DoubleToString(price, digits));
       lastSignalTimestamp = signal.timestamp;
    }
+}
+
+//+------------------------------------------------------------------+
+//| Check and Protect Profitable Positions                             |
+//+------------------------------------------------------------------+
+void CheckProfitProtection() {
+    if(!ENABLE_PROFIT_PROTECTION) return;
+    
+    for(int i = 0; i < OrdersTotal(); i++) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            double currentProfit = OrderProfit();
+            
+            // Only check positions that are currently profitable
+            if(currentProfit > 0) {
+                string symbol = OrderSymbol();
+                double pointValue = MarketInfo(symbol, MODE_POINT);
+                double bufferInPoints = PROFIT_LOCK_BUFFER * 10; // Convert pips to points
+                
+                double currentPrice = OrderType() == OP_BUY ? 
+                    MarketInfo(symbol, MODE_BID) : 
+                    MarketInfo(symbol, MODE_ASK);
+                
+                // Calculate price at which profit would be zero
+                double breakEvenPrice = OrderOpenPrice();
+                
+                // If price is approaching breakeven level (within buffer), close the position
+                if(OrderType() == OP_BUY) {
+                    if(currentPrice <= breakEvenPrice + (bufferInPoints * pointValue)) {
+                        CloseTradeWithProtection(OrderTicket(), "Profit protection activated");
+                    }
+                } else if(OrderType() == OP_SELL) {
+                    if(currentPrice >= breakEvenPrice - (bufferInPoints * pointValue)) {
+                        CloseTradeWithProtection(OrderTicket(), "Profit protection activated");
+                    }
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Close Trade with Retry Protection                                  |
+//+------------------------------------------------------------------+
+bool CloseTradeWithProtection(int ticket, string reason) {
+    if(!OrderSelect(ticket, SELECT_BY_TICKET)) return false;
+    
+    double closePrice = OrderType() == OP_BUY ? 
+        MarketInfo(OrderSymbol(), MODE_BID) : 
+        MarketInfo(OrderSymbol(), MODE_ASK);
+    
+    bool success = false;
+    for(int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        success = OrderClose(ticket, OrderLots(), closePrice, MAX_SLIPPAGE, clrRed);
+        if(success) {
+            PrintDebug("Closed position " + IntegerToString(ticket) + ": " + reason);
+            break;
+        }
+        
+        int error = GetLastError();
+        PrintDebug("Close attempt " + IntegerToString(attempt + 1) + " failed: " + 
+                   ErrorDescription(error));
+        Sleep(1000); // Wait 1 second before retry
+        RefreshRates();
+    }
+    
+    return success;
 }
 
 //+------------------------------------------------------------------+
