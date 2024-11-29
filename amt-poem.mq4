@@ -11,9 +11,10 @@
 extern string API_URL = "https://api.tradejourney.ai/api/alerts/mt4-forex-signals";  // API URL
 extern int    REFRESH_MINUTES = 5;                    // How often to check for new signals
 extern bool   DEBUG_MODE = true;                      // Print debug messages
-extern string PAPERTRAIL_HOST = "logs.papertrailapp.com"; // Papertrail host
+extern string PAPERTRAIL_HOST = "https://logs.papertrailapp.com"; // Papertrail host
 extern string PAPERTRAIL_PORT = "26548";                  // Your Papertrail port
 extern string SYSTEM_NAME = "TradeJourney";                     // System identifier
+extern bool   ENABLE_PAPERTRAIL = true;                    // Enable/disable Papertrail logging
 extern bool   ENABLE_PROFIT_PROTECTION = true;     // Enable/disable profit protection
 extern double PROFIT_LOCK_BUFFER = 2.0;         // Buffer before closing (2.0 pips for forex, 2.0% for crypto)
 extern double MIN_PROFIT_TO_PROTECT = 1.0;      // Minimum profit (in pips/%) before protection activates
@@ -73,6 +74,7 @@ void OnDeinit(const int reason) {
 //| Send Log to Papertrail                                            |
 //+------------------------------------------------------------------+
 void SendToPapertrail(string message, string level = "INFO") {
+    if (!ENABLE_PAPERTRAIL) return; // Skip if Papertrail is disabled
     string timestamp = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
     string logMessage = StringFormat(
         "{\"system\":\"%s\",\"facility\":\"MT4\",\"severity\":\"%s\",\"timestamp\":\"%s\",\"message\":\"%s\"}",
