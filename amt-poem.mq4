@@ -70,40 +70,69 @@ void OnDeinit(const int reason) {
 }
 
 //+------------------------------------------------------------------+
+//| Helper function to escape JSON strings                             |
+//+------------------------------------------------------------------+
+string EscapeJsonString(string str) {
+    string result = str;
+    StringReplace(result, "\"", "\\\"");
+    StringReplace(result, "\n", "\\n");
+    StringReplace(result, "\r", "\\r");
+    return result;
+}
+
+//+------------------------------------------------------------------+
 //| Send Log to Papertrail                                            |
 //+------------------------------------------------------------------+
-void SendToPapertrail(string message, string level = "INFO") {
-    if (!ENABLE_PAPERTRAIL) return; // Skip if Papertrail is disabled
+void SendToPapertrail(string message, string level = "INFO", string symbol = "") {
+    if (!ENABLE_PAPERTRAIL) {
+        Print("Papertrail disabled - skipping log: ", message);
+        return;
+    }
     
-    // Convert MT4 log level to API log level
+    // Convert MT4 log level to API level
     string apiLevel;
     if (level == "ERROR") apiLevel = "error";
     else if (level == "WARNING") apiLevel = "warn";
-    else if (level == "TRADE") apiLevel = "info";
-    else if (level == "DEBUG") apiLevel = "info";
     else apiLevel = "info";
     
-    // Create metadata with additional context
-    string metadata = StringFormat(
-        "{\"system\":\"%s\",\"timestamp\":\"%s\",\"level\":\"%s\",\"account\":\"%s\"}",
-        SYSTEM_NAME,
-        TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
-        level,
-        AccountNumber()
+    // Format timestamp in ISO 8601 format
+    datetime currentTime = TimeCurrent();
+    string isoTimestamp = StringFormat(
+        "%d-%02d-%02dT%02d:%02d:%02dZ",
+        TimeYear(currentTime),
+        TimeMonth(currentTime),
+        TimeDay(currentTime),
+        TimeHour(currentTime),
+        TimeMinute(currentTime),
+        TimeSeconds(currentTime)
     );
     
-    // Create the JSON payload
-    string logMessage = StringFormat(
+    // Ensure symbol is not empty
+    if(symbol == "") symbol = Symbol();
+    
+    // Build metadata object with enhanced information
+    string metadata = StringFormat(
+        "{\"system\":\"%s\",\"timestamp\":\"%s\",\"level\":\"%s\",\"account\":%d,\"symbol\":\"%s\",\"timeframe\":\"%s\"}",
+        SYSTEM_NAME,
+        isoTimestamp,
+        level,
+        AccountNumber(),
+        symbol,
+        TIMEFRAME
+    );
+    
+    // Build the complete payload
+    string payload = StringFormat(
         "{\"message\":\"%s\",\"level\":\"%s\",\"metadata\":%s}",
-        message,
+        EscapeJsonString(message),
         apiLevel,
         metadata
     );
     
     string headers = "Content-Type: application/json\r\n";
-    
     char post[];
-    StringToCharArray(logMessage, post);
+    ArrayResize(post, StringLen(payload));
+    StringToCharArray(payload, post, 0, StringLen(payload));
     
     char result[];
     string resultHeaders;
@@ -122,57 +151,52 @@ void SendToPapertrail(string message, string level = "INFO") {
     if(res == -1) {
         int error = GetLastError();
         if(error == 4060) {
-            Print("ERROR: Please enable WebRequest for " + PAPERTRAIL_HOST);
-            Print("Add the URL to MetaTrader -> Tools -> Options -> Expert Advisors -> Allow WebRequest for listed URL.");
+            Print("ERROR: Enable WebRequest for URL: ", PAPERTRAIL_HOST);
+            Print("Add URL to MetaTrader -> Tools -> Options -> Expert Advisors -> Allow WebRequest");
             return;
         }
-        
-        string errorMsg = StringFormat("Failed to send log. Error: %d, Message: %s", error, ErrorDescription(error));
-        Print(errorMsg);
-        
-        // If we failed to send a non-error log, try to send an error log about the failure
-        if(level != "ERROR") {
-            SendToPapertrail(errorMsg, "ERROR");
-        }
+        Print("Failed to send log. Error: ", error, " - ", ErrorDescription(error));
+    } else {
+        string response = CharArrayToString(result, 0, ArraySize(result));
+        if(DEBUG_MODE) Print("Log sent successfully. Response: ", response);
     }
 }
 
 //+------------------------------------------------------------------+
 //| Enhanced Debug Print Function with Papertrail Integration          |
 //+------------------------------------------------------------------+
-void PrintDebug(string message, string level = "INFO") {
-    string formattedMessage = TimeToString(TimeCurrent()) + " | " + message;
+void PrintDebug(string message, string level = "INFO", string symbol = "") {
+    string formattedMessage = TimeToString(TimeCurrent()) + " | " + 
+                             (symbol == "" ? Symbol() : symbol) + " | " + message;
     
-    // Always send to Papertrail first
-    SendToPapertrail(message, level);
+    SendToPapertrail(message, level, symbol);
     
-    // Then maintain local MT4 logging if debug mode is enabled
     if(DEBUG_MODE) {
         Print(formattedMessage);
     }
 }
 
 //+------------------------------------------------------------------+
-//| Log Levels for Different Types of Messages                         |
+//| Logging Helper Functions                                           |
 //+------------------------------------------------------------------+
-void LogError(string message) {
-    PrintDebug(message, "ERROR");
+void LogError(string message, string symbol = "") {
+    PrintDebug(message, "ERROR", symbol);
 }
 
-void LogWarning(string message) {
-    PrintDebug(message, "WARNING");
+void LogWarning(string message, string symbol = "") {
+    PrintDebug(message, "WARNING", symbol);
 }
 
-void LogInfo(string message) {
-    PrintDebug(message, "INFO");
+void LogInfo(string message, string symbol = "") {
+    PrintDebug(message, "INFO", symbol);
 }
 
-void LogDebug(string message) {
-    PrintDebug(message, "DEBUG");
+void LogDebug(string message, string symbol = "") {
+    PrintDebug(message, "DEBUG", symbol);
 }
 
-void LogTrade(string message) {
-    PrintDebug(message, "TRADE");
+void LogTrade(string message, string symbol = "") {
+    PrintDebug(message, "TRADE", symbol);
 }
 
 //+------------------------------------------------------------------+
@@ -183,8 +207,13 @@ void OnTick() {
    CheckEmergencyClose();
    
    if (!IsTimeToCheck()) return;
+
+   LogAccountStatus();
+   LogDailyPerformance();
    
    string currentSymbol = Symbol();
+   LogMarketConditions(currentSymbol);
+   LogTradingVolume(currentSymbol);
    LogDebug("Bid Price: " + DoubleToString(MarketInfo(currentSymbol, MODE_BID), 5));
 
    string apiSymbol = GetBaseSymbol(currentSymbol);
@@ -851,4 +880,118 @@ void CheckEmergencyClose() {
          }
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| Log Account Performance Metrics                                    |
+//+------------------------------------------------------------------+
+void LogAccountStatus() {
+    string metrics = StringFormat(
+        "Account Performance Metrics:" +
+        "\nBalance: %.2f" +
+        "\nEquity: %.2f" +
+        "\nFloating P/L: %.2f" +
+        "\nMargin Used: %.2f" +
+        "\nFree Margin: %.2f" +
+        "\nMargin Level: %.2f%%",
+        AccountBalance(),
+        AccountEquity(),
+        AccountEquity() - AccountBalance(),
+        AccountMargin(),
+        AccountFreeMargin(),
+        AccountMargin() != 0 ? (AccountEquity() / AccountMargin()) * 100 : 0
+    );
+    
+    LogInfo(metrics);
+}
+
+//+------------------------------------------------------------------+
+//| Log Daily Performance Summary                                      |
+//+------------------------------------------------------------------+
+void LogDailyPerformance() {
+    static datetime lastDayChecked = 0;
+    datetime currentTime = TimeCurrent();
+    
+    // Only log once per day
+    if(TimeDay(currentTime) == TimeDay(lastDayChecked)) return;
+    
+    double totalProfit = 0;
+    int totalTrades = 0;
+    int winningTrades = 0;
+    
+    // Calculate daily statistics
+    for(int i = OrdersHistoryTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) {
+            if(TimeDay(OrderCloseTime()) == TimeDay(currentTime)) {
+                totalProfit += OrderProfit() + OrderSwap() + OrderCommission();
+                totalTrades++;
+                if(OrderProfit() > 0) winningTrades++;
+            }
+        }
+    }
+    
+    string summary = StringFormat(
+        "Daily Performance Summary:" +
+        "\nDate: %s" +
+        "\nTotal Profit/Loss: %.2f" +
+        "\nTotal Trades: %d" +
+        "\nWinning Trades: %d" +
+        "\nWin Rate: %.2f%%",
+        TimeToString(currentTime, TIME_DATE),
+        totalProfit,
+        totalTrades,
+        winningTrades,
+        totalTrades > 0 ? (winningTrades * 100.0 / totalTrades) : 0
+    );
+    
+    LogInfo(summary);
+    lastDayChecked = currentTime;
+}
+
+//+------------------------------------------------------------------+
+//| Log Market Conditions                                             |
+//+------------------------------------------------------------------+
+void LogMarketConditions(string symbol) {
+    double spread = MarketInfo(symbol, MODE_SPREAD) * MarketInfo(symbol, MODE_POINT);
+    string conditions = StringFormat(
+        "Market Conditions for %s:" +
+        "\nBid: %.5f" +
+        "\nAsk: %.5f" +
+        "\nSpread: %.5f" +
+        "\nDigits: %d" +
+        "\nPip Value: %.5f" +
+        "\nMin Lot: %.2f" +
+        "\nMax Lot: %.2f" +
+        "\nLot Step: %.2f",
+        symbol,
+        MarketInfo(symbol, MODE_BID),
+        MarketInfo(symbol, MODE_ASK),
+        spread,
+        (int)MarketInfo(symbol, MODE_DIGITS),
+        MarketInfo(symbol, MODE_TICKVALUE),
+        MarketInfo(symbol, MODE_MINLOT),
+        MarketInfo(symbol, MODE_MAXLOT),
+        MarketInfo(symbol, MODE_LOTSTEP)
+    );
+    
+    LogInfo(conditions, symbol);
+}
+
+//+------------------------------------------------------------------+
+//| Log Trading Volume                                                |
+//+------------------------------------------------------------------+
+void LogTradingVolume(string symbol) {
+    long currentVolume = (long)iVolume(symbol, PERIOD_CURRENT, 0);
+    long previousVolume = (long)iVolume(symbol, PERIOD_CURRENT, 1);
+    
+    string volumeInfo = StringFormat(
+        "Trading Volume for %s:" +
+        "\nCurrent Bar Volume: %I64d" +
+        "\nPrevious Bar Volume: %I64d",
+        symbol,
+        currentVolume,
+        previousVolume
+    );
+    
+    LogDebug(volumeInfo, symbol);
 }
