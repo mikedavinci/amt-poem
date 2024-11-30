@@ -208,12 +208,12 @@ void OnTick() {
    
    if (!IsTimeToCheck()) return;
 
-   LogAccountStatus();
-   LogDailyPerformance();
+   // LogAccountStatus();
+   // LogDailyPerformance();
    
    string currentSymbol = Symbol();
-   LogMarketConditions(currentSymbol);
-   LogTradingVolume(currentSymbol);
+   // LogMarketConditions(currentSymbol);
+   // LogTradingVolume(currentSymbol);
    LogDebug("Bid Price: " + DoubleToString(MarketInfo(currentSymbol, MODE_BID), 5));
 
    string apiSymbol = GetBaseSymbol(currentSymbol);
@@ -310,6 +310,10 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
    // 1. Calculate maximum risk amount based on account balance
    double accountBalance = AccountBalance();
    double maxRiskAmount = accountBalance * (RISK_PERCENT / 100);
+
+   LogDebug("Position Size Calculation:" +
+            "\nAccount Balance: $" + DoubleToString(accountBalance, 2) +
+            "\nRisk Amount: $" + DoubleToString(maxRiskAmount, 2));
    
    // 2. Calculate stop loss distance in price terms
    double stopDistance = MathAbs(entryPrice - stopLoss);  // Always use the provided stop loss
@@ -343,24 +347,24 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
       
       // Convert stop distance to points
       double stopPoints = stopDistance / point;
-      
-      // Calculate pip value
-      double pipValue;
+
+        // Calculate actual pip value for 1 lot
+      double lotPipValue;
       if(isJPYPair) {
-         pipValue = tickValue * 100;  // JPY pairs have 2 decimal places
+         pipValue = (tickValue * 100);  // JPY pairs
          stopPoints = stopPoints / 100;
       } else {
-         pipValue = tickValue * 10;   // Other pairs have 4 decimal places
+         pipValue = (tickValue * 10);   // Other pairs
          stopPoints = stopPoints / 10;
       }
       
       // Calculate lot size based on risk
       lotSize = maxRiskAmount / (stopPoints * pipValue);
-      
-      LogDebug("Forex Position Size Calculation:" +
-                 "\nStop Points: " + DoubleToString(stopPoints, 1) +
-                 "\nPip Value: $" + DoubleToString(pipValue, 5) +
-                 "\nInitial Lot Size: " + DoubleToString(lotSize, 3));
+
+   LogDebug("Forex Position Size Details:" +
+            "\nStop Distance (pips): " + DoubleToString(stopPoints, 1) +
+            "\nPip Value per Lot: $" + DoubleToString(pipValue, 2) +
+            "\nCalculated Lot Size: " + DoubleToString(lotSize, 3));
    }
    
    // Get broker's lot constraints
@@ -695,28 +699,59 @@ int GetOpenPositionType(string symbol) {
 //| Close current position for the symbol                             |
 //+------------------------------------------------------------------+
 bool CloseCurrentPosition(string symbol) {
-   for(int i = 0; i < OrdersTotal(); i++) {
-      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-         if(OrderSymbol() == symbol) {
-            double closePrice = OrderType() == OP_BUY ? MarketInfo(symbol, MODE_BID) : MarketInfo(symbol, MODE_ASK);
+    int totalTries = 3;
+    for(int attempt = 1; attempt <= totalTries; attempt++) {
+        for(int i = OrdersTotal() - 1; i >= 0; i--) {
+            if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+            if(OrderSymbol() != symbol) continue;
             
-            for(int retry = 0; retry < MAX_RETRIES; retry++) {
-               bool closed = OrderClose(OrderTicket(), OrderLots(), closePrice, MAX_SLIPPAGE, OrderType() == OP_BUY ? clrRed : clrGreen);
-               if(closed) return true;
-               
-               int error = GetLastError();
-               LogError("Failed to close position, attempt " + IntegerToString(retry + 1) + " of " + IntegerToString(MAX_RETRIES) +
-                         "\nError: " + IntegerToString(error) +
-                         "\nDescription: " + ErrorDescription(error));
-               
-               RefreshRates();
-               Sleep(1000);  // Wait 1 second before retry
+            double closePrice = OrderType() == OP_BUY ? MarketInfo(symbol, MODE_BID) : MarketInfo(symbol, MODE_ASK);
+            LogInfo(StringFormat("Attempting to close position - Ticket: %d, Type: %s, Lots: %.2f, Price: %.5f", 
+                OrderTicket(), OrderType() == OP_BUY ? "BUY" : "SELL", OrderLots(), closePrice), symbol);
+            
+            // Ensure we have fresh prices
+            RefreshRates();
+            
+            // Try to close with increased slippage on retries
+            int slippage = MAX_SLIPPAGE * attempt;
+            bool success = OrderClose(OrderTicket(), OrderLots(), closePrice, slippage, clrRed);
+            
+            if(!success) {
+                int error = GetLastError();
+                LogError(StringFormat("Failed to close position, attempt %d of %d\nError: %d\nDescription: %s", 
+                    attempt, totalTries, error, ErrorDescription(error)), symbol);
+                    
+                // Handle specific error cases
+                switch(error) {
+                    case ERR_NO_CONNECTION:
+                    case ERR_COMMON_ERROR:
+                    case ERR_SERVER_BUSY:
+                    case ERR_NO_RESULT:
+                    case ERR_TRADE_TIMEOUT:
+                        Sleep(1000 * attempt); // Exponential backoff
+                        RefreshRates();
+                        continue;
+                    case ERR_PRICE_CHANGED:
+                    case ERR_REQUOTE:
+                        RefreshRates();
+                        continue;
+                    case ERR_TRADE_CONTEXT_BUSY:
+                        Sleep(100);
+                        RefreshRates();
+                        continue;
+                    default:
+                        LogError(StringFormat("Unhandled error while closing position: %d - %s", 
+                            error, ErrorDescription(error)), symbol);
+                        return false;
+                }
+            } else {
+                LogTrade(StringFormat("Successfully closed position - Ticket: %d", OrderTicket()), symbol);
+                return true;
             }
-            return false;  // Failed after all retries
-         }
-      }
-   }
-   return false;  // No matching position found
+        }
+        Sleep(500); // Brief pause between attempts
+    }
+    return false;
 }
 
 //+------------------------------------------------------------------+
