@@ -9,7 +9,7 @@
 
 // External parameters
 extern string API_URL = "https://api.tradejourney.ai/api/alerts/mt4-forex-signals";  // API URL
-extern int    REFRESH_MINUTES = 5;                    // How often to check for new signals
+extern int    REFRESH_MINUTES = 60;                    // How often to check for new signals
 extern bool   DEBUG_MODE = true;                      // Print debug messages
 extern string PAPERTRAIL_HOST = "https://api.tradejourney.ai/api/alerts/log"; // API endpoint for logs
 extern string SYSTEM_NAME = "EA-TradeJourney";                     // System identifier
@@ -35,6 +35,11 @@ extern bool   TRADE_ASIAN_SESSION = true;          // Allow trading during Asian
 extern bool   TRADE_LONDON_SESSION = true;         // Allow trading during London session
 extern bool   TRADE_NEWYORK_SESSION = true;        // Allow trading during New York session
 extern bool   ALLOW_SESSION_OVERLAP = true;        // Allow trading during session overlaps
+
+// Custom Error Codes (start at high number to avoid conflicts)
+#define ERR_CUSTOM_START           65536
+#define ERR_CUSTOM_ERROR          (ERR_CUSTOM_START + 1)
+#define ERR_AUTHORIZATION         (ERR_CUSTOM_START + 3)
 
 // Global variables
 datetime lastCheck = 0;
@@ -414,6 +419,8 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
     
     // 4. Calculate position size
     double lotSize;
+    double stopPoints = 0;  
+    double pipValue = 0;    
     
     if(isCryptoPair) {
         // For crypto, calculate based on direct price difference
@@ -427,15 +434,12 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
             riskPerCoin, lotSize, symbol
         ));
     } else {
-        // For forex pairs
-        double point = MarketInfo(symbol, MODE_POINT);
-        double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
-        
-        // Convert stop distance to points
-        double stopPoints = stopDistance / point;
-        
-        // Calculate pip value
-        double pipValue;
+      // For forex pairs
+      double point = MarketInfo(symbol, MODE_POINT);
+      double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
+      
+       // Convert stop distance to points
+        stopPoints = stopDistance / point;  // Remove double declaration
         
         if(isJPYPair) {
             pipValue = tickValue * 100;  // JPY pairs have 2 decimal places
@@ -1124,37 +1128,36 @@ bool CloseCurrentPosition(string symbol) {
                 int error = GetLastError();
                 
                 // Handle specific error cases
-                switch(error) {
-                    case ERR_NO_CONNECTION:
-                    case ERR_COMMON_ERROR:
-                    case ERR_SERVER_BUSY:
-                    case ERR_NO_RESULT:
-                    case ERR_TRADE_TIMEOUT:
-                        Sleep(1000 * attempt);  // Exponential backoff
-                        RefreshRates();
-                        continue;
-                        
-                    case ERR_PRICE_CHANGED:
-                    case ERR_REQUOTE:
-                        RefreshRates();
-                        continue;
-                        
-                    case ERR_TRADE_CONTEXT_BUSY:
-                        Sleep(100);
-                        continue;
-                        
-                    default:
-                        LogError(StringFormat(
-                            "Close failed - Attempt %d/%d" +
-                            "\nError: %d" +
-                            "\nDescription: %s" +
-                            "\nTicket: %d" +
-                            "\nSymbol: %s",
-                            attempt, totalTries,
-                            error, ErrorDescription(error),
-                            ticket, symbol
-                        ));
-                }
+               switch(error) {
+                  case ERR_NO_CONNECTION:
+                  case ERR_COMMON_ERROR:
+                  case ERR_SERVER_BUSY:
+                  case ERR_TRADE_TIMEOUT:
+                     Sleep(1000 * attempt);  // Exponential backoff
+                     RefreshRates();
+                     continue;
+                     
+                  case ERR_PRICE_CHANGED:
+                  case ERR_REQUOTE:
+                     RefreshRates();
+                     continue;
+                     
+                  case ERR_TRADE_CONTEXT_BUSY:
+                     Sleep(100);
+                     continue;
+                     
+                  default:
+                     LogError(StringFormat(
+                           "Close failed - Attempt %d/%d" +
+                           "\nError: %d" +
+                           "\nDescription: %s" +
+                           "\nTicket: %d" +
+                           "\nSymbol: %s",
+                           attempt, totalTries,
+                           error, ErrorDescription(error),
+                           ticket, symbol
+                     ));
+               }
             } else {
                 double profit = OrderProfit() + OrderSwap() + OrderCommission();
                 LogTrade(StringFormat(
@@ -1302,71 +1305,16 @@ string ErrorDescription(int error_code) {
    string error_string;
    
    switch(error_code) {
-      // Trading Errors
-      case ERR_NO_ERROR:              error_string = "No error";                                                  break;
-      case ERR_NO_RESULT:             error_string = "No error returned but result is unknown";                  break;
-      case ERR_COMMON_ERROR:          error_string = "Common error";                                             break;
-      case ERR_INVALID_TRADE_PARAMETERS: error_string = "Invalid trade parameters";                              break;
-      case ERR_SERVER_BUSY:           error_string = "Trade server is busy";                                     break;
-      case ERR_OLD_VERSION:           error_string = "Old version of client terminal";                           break;
-      case ERR_NO_CONNECTION:         error_string = "No connection with trade server";                          break;
-      case ERR_NOT_ENOUGH_RIGHTS:     error_string = "Not enough rights";                                        break;
-      case ERR_TOO_FREQUENT_REQUESTS: error_string = "Too frequent requests";                                    break;
-      case ERR_MALFUNCTIONAL_TRADE:   error_string = "Malfunctional trade operation";                           break;
+      // Custom Error Messages
+      case ERR_CUSTOM_START:            error_string = "Custom error";                                         break;
+      case ERR_CUSTOM_START + 1:        error_string = "Resource not found";                                   break;
+      case ERR_CUSTOM_START + 2:        error_string = "Authorization error";                                  break;
+      case ERR_CUSTOM_START + 3:        error_string = "Object already exists";                                break;
+      case ERR_CUSTOM_START + 4:        error_string = "Object does not exist";                               break;
       
-      // Account Errors
-      case ERR_ACCOUNT_DISABLED:      error_string = "Account disabled";                                         break;
-      case ERR_INVALID_ACCOUNT:       error_string = "Invalid account";                                          break;
-      
-      // Trade Operation Errors
-      case ERR_TRADE_TIMEOUT:         error_string = "Trade timeout";                                            break;
-      case ERR_INVALID_PRICE:         error_string = "Invalid price";                                            break;
-      case ERR_INVALID_STOPS:         error_string = "Invalid stops";                                            break;
-      case ERR_INVALID_TRADE_VOLUME:  error_string = "Invalid trade volume";                                     break;
-      case ERR_MARKET_CLOSED:         error_string = "Market is closed";                                         break;
-      case ERR_TRADE_DISABLED:        error_string = "Trade is disabled";                                        break;
-      case ERR_NOT_ENOUGH_MONEY:      error_string = "Not enough money";                                         break;
-      case ERR_PRICE_CHANGED:         error_string = "Price changed";                                            break;
-      case ERR_OFF_QUOTES:            error_string = "Off quotes";                                               break;
-      case ERR_BROKER_BUSY:           error_string = "Broker is busy";                                           break;
-      case ERR_REQUOTE:               error_string = "Requote";                                                  break;
-      case ERR_ORDER_LOCKED:          error_string = "Order is locked";                                          break;
-      case ERR_LONG_POSITIONS_ONLY_ALLOWED: error_string = "Long positions only allowed";                        break;
-      
-      // System Errors
-      case ERR_TOO_MANY_REQUESTS:     error_string = "Too many requests";                                        break;
-      case ERR_TRADE_MODIFY_DENIED:   error_string = "Modification denied because order too close to market";    break;
-      case ERR_TRADE_CONTEXT_BUSY:    error_string = "Trade context is busy";                                    break;
-      case ERR_TRADE_EXPIRATION_DENIED: error_string = "Expirations are denied by broker";                       break;
-      case ERR_TRADE_TOO_MANY_ORDERS: error_string = "Amount of open and pending orders reached the limit";      break;
-      case ERR_TRADE_HEDGE_PROHIBITED: error_string = "Hedging is prohibited";                                   break;
-      case ERR_TRADE_PROHIBITED_BY_FIFO: error_string = "Prohibited by FIFO rule";                              break;
-      
-      // Custom Trading Errors
-      case ERR_INVALID_ORDER_TYPE:    error_string = "Invalid order type";                                       break;
-      case ERR_INVALID_SYMBOL:        error_string = "Invalid symbol";                                           break;
-      case ERR_INVALID_STOP_LOSS:     error_string = "Invalid stop loss";                                        break;
-      case ERR_INVALID_TAKE_PROFIT:   error_string = "Invalid take profit";                                      break;
-      case ERR_INVALID_MAGIC_NUMBER:  error_string = "Invalid magic number";                                     break;
-      case ERR_MARKET_GAP:            error_string = "Market gap";                                               break;
-      
-      // Network Errors
-      case ERR_NETWORK_ERROR:         error_string = "Network error";                                            break;
-      case ERR_SEND_FAILED:           error_string = "Send failed";                                              break;
-      case ERR_INVALID_PARAMETER:     error_string = "Invalid parameter";                                        break;
-      case ERR_DLL_CALLS_NOT_ALLOWED: error_string = "DLL calls not allowed";                                   break;
-      
-      // Other Errors
-      case ERR_CUSTOM_ERROR:          error_string = "Custom error";                                             break;
-      case ERR_RESOURCE_NOT_FOUND:    error_string = "Resource not found";                                       break;
-      case ERR_AUTHORIZATION:         error_string = "Authorization error";                                       break;
-      case ERR_OBJECT_ALREADY_EXISTS: error_string = "Object already exists";                                    break;
-      case ERR_OBJECT_DOES_NOT_EXIST: error_string = "Object does not exist";                                   break;
-      
-      default: error_string = StringFormat("Unknown error (%d)", error_code);                                    break;
+      default: error_string = StringFormat("Unknown error (%d)", error_code);                                  break;
    }
    
-   // Add error code to description for reference
    return StringFormat("Error %d: %s", error_code, error_string);
 }
 
@@ -1375,33 +1323,15 @@ string ErrorDescription(int error_code) {
 //+------------------------------------------------------------------+
 string GetErrorSeverity(int error_code) {
     switch(error_code) {
-        // Critical Errors (require immediate attention)
-        case ERR_NO_CONNECTION:
-        case ERR_ACCOUNT_DISABLED:
-        case ERR_INVALID_ACCOUNT:
-        case ERR_NOT_ENOUGH_MONEY:
+        // Critical Errors
+        case ERR_CUSTOM_START + 1:
+        case ERR_CUSTOM_START + 2:
             return "CRITICAL";
             
-        // Serious Errors (may need intervention)
-        case ERR_MARKET_CLOSED:
-        case ERR_TRADE_DISABLED:
-        case ERR_INVALID_STOPS:
-        case ERR_INVALID_TRADE_VOLUME:
+        // Serious Errors
+        case ERR_CUSTOM_START + 3:
+        case ERR_CUSTOM_START + 4:
             return "SERIOUS";
-            
-        // Temporary Errors (can retry)
-        case ERR_PRICE_CHANGED:
-        case ERR_REQUOTE:
-        case ERR_SERVER_BUSY:
-        case ERR_TRADE_CONTEXT_BUSY:
-        case ERR_TRADE_TIMEOUT:
-            return "TEMPORARY";
-            
-        // Warning Errors (can continue)
-        case ERR_TOO_FREQUENT_REQUESTS:
-        case ERR_TOO_MANY_REQUESTS:
-        case ERR_OFF_QUOTES:
-            return "WARNING";
             
         default:
             return "UNKNOWN";
