@@ -80,17 +80,18 @@ int OnInit() {
   SymbolSelect("ETHUSD", true);
   SymbolSelect("LTCUSD", true);
 
-  LogInfo("EA Initialized with Risk: " + DoubleToString(RISK_PERCENT, 2) + "%");
-  LogInfo("Account Balance: " + DoubleToString(AccountBalance(), 2));
-
-  return (INIT_SUCCEEDED);
+   
+   LogInfo(StringFormat("EA Initialized with Risk: %.2f%%", RISK_PERCENT));
+   LogInfo(StringFormat("Account Balance: %.2f", AccountBalance()));
+   
+   return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-  LogInfo("EA Deinitialized. Reason: " + IntegerToString(reason));
+   LogInfo(StringFormat("EA Deinitialized. Reason: %d", reason));
 }
 
 //+------------------------------------------------------------------+
@@ -107,63 +108,82 @@ string EscapeJsonString(string str) {
 //+------------------------------------------------------------------+
 //| Send Log to Papertrail                                            |
 //+------------------------------------------------------------------+
-void SendToPapertrail(string message, string level = "INFO",
-                      string symbol = "") {
-  if (!ENABLE_PAPERTRAIL) {
-    Print("Papertrail disabled - skipping log: ", message);
-    return;
-  }
-
-  // Convert MT4 log level to API level
-  string apiLevel;
-  if (level == "ERROR")
-    apiLevel = "error";
-  else if (level == "WARNING")
-    apiLevel = "warn";
-  else
-    apiLevel = "info";
-
-  // Format timestamp in ISO 8601 format
-  datetime currentTime = TimeCurrent();
-  string isoTimestamp = StringFormat(
-      "%d-%02d-%02dT%02d:%02d:%02dZ", TimeYear(currentTime),
-      TimeMonth(currentTime), TimeDay(currentTime), TimeHour(currentTime),
-      TimeMinute(currentTime), TimeSeconds(currentTime));
-
-  // Ensure symbol is not empty
-  if (symbol == "") symbol = Symbol();
-
-  // Build metadata object with enhanced information
-  string metadata = StringFormat(
-      "{\"system\":\"%s\",\"timestamp\":\"%s\",\"level\":\"%s\",\"account\":%d,"
-      "\"symbol\":\"%s\",\"timeframe\":\"%s\"}",
-      SYSTEM_NAME, isoTimestamp, level, AccountNumber(), symbol, TIMEFRAME);
-
-  // Build the complete payload
-  string payload =
-      StringFormat("{\"message\":\"%s\",\"level\":\"%s\",\"metadata\":%s}",
-                   EscapeJsonString(message), apiLevel, metadata);
-
-  string headers = "Content-Type: application/json\r\n";
-  char post[];
-  ArrayResize(post, StringLen(payload));
-  StringToCharArray(payload, post, 0, StringLen(payload));
-
-  char result[];
-  string resultHeaders;
-
-  ResetLastError();
-  int res = WebRequest("POST", PAPERTRAIL_HOST, headers, 5000, post, result,
-                       resultHeaders);
-
-  if (res == -1) {
-    int error = GetLastError();
-    if (error == 4060) {
-      Print("ERROR: Enable WebRequest for URL: ", PAPERTRAIL_HOST);
-      Print(
-          "Add URL to MetaTrader -> Tools -> Options -> Expert Advisors -> "
-          "Allow WebRequest");
-      return;
+void SendToPapertrail(string message, string level = "INFO", string symbol = "") {
+    if (!ENABLE_PAPERTRAIL) {
+        Print(StringFormat("Papertrail disabled - skipping log: %s", message));
+        return;
+    }
+    
+    // Convert MT4 log level to API level
+    string apiLevel;
+    if (level == "ERROR") apiLevel = "error";
+    else if (level == "WARNING") apiLevel = "warn";
+    else apiLevel = "info";
+    
+    // Format timestamp in ISO 8601 format
+    datetime currentTime = TimeCurrent();
+    string isoTimestamp = StringFormat(
+        "%d-%02d-%02dT%02d:%02d:%02dZ",
+        TimeYear(currentTime),
+        TimeMonth(currentTime),
+        TimeDay(currentTime),
+        TimeHour(currentTime),
+        TimeMinute(currentTime),
+        TimeSeconds(currentTime)
+    );
+    
+    // Ensure symbol is not empty
+    if(symbol == "") symbol = Symbol();
+    
+    // Build metadata object with enhanced information
+    string metadata = StringFormat(
+    "{\"system\":\"%s\",\"timestamp\":\"%s\",\"level\":\"%s\",\"account\":%d,\"symbol\":\"%s\",\"timeframe\":\"%s\"}",
+    SYSTEM_NAME,
+    isoTimestamp,
+    level,
+    AccountNumber(),
+    symbol,
+    TIMEFRAME
+);
+    
+    // Build the complete payload
+    string payload = StringFormat(
+        "{\"message\":\"%s\",\"level\":\"%s\",\"metadata\":%s}",
+        EscapeJsonString(message),
+        apiLevel,
+        metadata
+    );
+    
+    string headers = "Content-Type: application/json\r\n";
+    char post[];
+    ArrayResize(post, StringLen(payload));
+    StringToCharArray(payload, post, 0, StringLen(payload));
+    
+    char result[];
+    string resultHeaders;
+    
+    ResetLastError();
+    int res = WebRequest(
+        "POST",
+        PAPERTRAIL_HOST,
+        headers,
+        5000,
+        post,
+        result,
+        resultHeaders
+    );
+    
+    if(res == -1) {
+        int error = GetLastError();
+        if(error == 4060) {
+            Print("ERROR: Enable WebRequest for URL: ", PAPERTRAIL_HOST);
+            Print("Add URL to MetaTrader -> Tools -> Options -> Expert Advisors -> Allow WebRequest");
+            return;
+        }
+        Print(StringFormat("Failed to send log. Error: %d - %s", error, ErrorDescription(error)));
+    } else {
+        string response = CharArrayToString(result, 0, ArraySize(result));
+        if(DEBUG_MODE) Print(StringFormat("Log sent successfully. Response: %s", response));
     }
     Print("Failed to send log. Error: ", error, " - ", ErrorDescription(error));
   } else {
@@ -176,15 +196,14 @@ void SendToPapertrail(string message, string level = "INFO",
 //| Enhanced Debug Print Function with Papertrail Integration          |
 //+------------------------------------------------------------------+
 void PrintDebug(string message, string level = "INFO", string symbol = "") {
-  string formattedMessage = TimeToString(TimeCurrent()) + " | " +
-                            (symbol == "" ? Symbol() : symbol) + " | " +
-                            message;
-
-  SendToPapertrail(message, level, symbol);
-
-  if (DEBUG_MODE) {
-    Print(formattedMessage);
-  }
+    string formattedMessage = TimeToString(TimeCurrent()) + " | " + 
+                         (symbol == "" ? Symbol() : symbol) + " | " + message;
+    
+    SendToPapertrail(message, level, symbol);
+    
+    if(DEBUG_MODE) {
+        Print(formattedMessage);
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -313,29 +332,30 @@ bool IsTimeToCheck() {
 //| Fetch signals from API                                            |
 //+------------------------------------------------------------------+
 string FetchSignals(string url) {
-  string headers = "Content-Type: application/json\r\n";
-  char post[];
-  char result[];
-  string resultHeaders;
-
-  int res = WebRequest("GET",         // Method
-                       url,           // URL
-                       headers,       // Headers
-                       5000,          // Timeout
-                       post,          // POST data
-                       result,        // Server response
-                       resultHeaders  // Response headers
-  );
-
-  if (res == -1) {
-    int errorCode = GetLastError();
-    LogError("Error in WebRequest. Error code: " + IntegerToString(errorCode));
-    return "";
-  }
-
-  string response = CharArrayToString(result);
-  LogDebug("API Response: " + response);
-  return response;
+   string headers = "Content-Type: application/json\r\n";
+   char post[];
+   char result[];
+   string resultHeaders;
+   
+   int res = WebRequest(
+      "GET",                   // Method
+      url,                     // URL
+      headers,                 // Headers
+      5000,                    // Timeout
+      post,                    // POST data
+      result,                  // Server response
+      resultHeaders            // Response headers
+   );
+   
+   if(res == -1) {
+      int errorCode = GetLastError();
+      LogError(StringFormat("Error in WebRequest. Error code: %d", errorCode));
+      return "";
+   }
+   
+   string response = CharArrayToString(result);
+   LogDebug(StringFormat("API Response: %s", response));
+   return response;
 }
 
 //+------------------------------------------------------------------+
@@ -661,19 +681,19 @@ double CalculateStopLoss(string symbol, int cmd, double entryPrice) {
 void ProcessSignal(SignalData &signal) {
   // Initial symbol validation
   if (MarketInfo(signal.ticker, MODE_BID) == 0) {
-    LogError("Error: Invalid symbol " + signal.ticker);
+    LogError(StringFormat("Error: Invalid symbol %s", signal.ticker));
     return;
   }
 
   // Duplicate signal check
   if (signal.timestamp == lastSignalTimestamp) {
-    LogDebug("Signal already processed for: " + signal.timestamp);
+    LogDebug(StringFormat("Signal already processed for timestamp: %s", signal.timestamp));
     return;
   }
 
   // Market open check
   if (!IsMarketOpen(signal.ticker)) {
-    LogDebug("Market closed for " + signal.ticker + " - signal not processed");
+    LogDebug(StringFormat("Market closed for %s - signal not processed", signal.ticker));
     return;
   }
 
@@ -684,7 +704,7 @@ void ProcessSignal(SignalData &signal) {
   else if (signal.action == "SELL")
     cmd = OP_SELL;
   else {
-    LogDebug("NEUTRAL signal received - no action taken");
+    LogDebug(StringFormat("NEUTRAL signal received for %s - no action taken", signal.ticker));
     return;
   }
 
@@ -700,41 +720,59 @@ void ProcessSignal(SignalData &signal) {
     // Close if opposite signal received
     if ((cmd == OP_BUY && currentPositionType == OP_SELL) ||
         (cmd == OP_SELL && currentPositionType == OP_BUY)) {
-      LogTrade(StringFormat("Reverse signal received for %s\n" +
-                                "Current Position: %s\n" + "New Signal: %s",
-                            signal.ticker,
-                            currentPositionType == OP_BUY ? "BUY" : "SELL",
-                            signal.action));
+      LogTrade(StringFormat(
+          "Reverse signal received for %s:\n" +
+          "Current Position: %s\n" +
+          "New Signal: %s",
+          signal.ticker,
+          currentPositionType == OP_BUY ? "BUY" : "SELL",
+          signal.action
+      ));
 
       if (!CloseCurrentPosition(signal.ticker)) {
-        LogError(
-            "Failed to close existing position - new position will not be "
-            "opened");
+        LogError(StringFormat(
+            "Failed to close existing position for %s - new position will not be opened",
+            signal.ticker
+        ));
         return;
       }
     } else {
-      LogDebug("Position already exists in same direction - no action taken");
+      LogDebug(StringFormat(
+          "Position already exists in same direction for %s - no action taken",
+          signal.ticker
+      ));
       return;
     }
   }
 
   // Risk management check
   if (!CanOpenNewPosition(signal.ticker)) {
-    LogDebug("Risk management prevented opening new position");
+    LogDebug(StringFormat(
+        "Risk management prevented opening new position for %s",
+        signal.ticker
+    ));
     return;
   }
 
   // Calculate stop loss
   double sl = CalculateStopLoss(signal.ticker, cmd, price);
   if (sl == 0) {
-    LogError("Invalid stop loss calculated");
+    LogError(StringFormat(
+        "Invalid stop loss calculated for %s at price %.5f",
+        signal.ticker,
+        price
+    ));
     return;
   }
 
   // Calculate position size based on risk
   double lotSize = CalculatePositionSize(signal.ticker, price, sl);
   if (lotSize == 0) {
-    LogError("Invalid lot size calculated");
+    LogError(StringFormat(
+        "Invalid lot size calculated for %s at price %.5f",
+        signal.ticker,
+        price
+    ));
     return;
   }
 
@@ -754,10 +792,12 @@ void ProcessSignal(SignalData &signal) {
 
   // Final risk validation using RISK_PERCENT
   if (riskPercent > RISK_PERCENT) {
-    LogError(StringFormat("Trade rejected - Risk exceeds parameter" +
-                              "\nCalculated Risk: %.2f%%" +
-                              "\nMaximum Allowed: %.2f%%",
-                          riskPercent, RISK_PERCENT));
+    LogError(StringFormat(
+        "Trade rejected - Risk exceeds parameter" +
+        "\nCalculated Risk: %.2f%%" +
+        "\nMaximum Allowed: %.2f%%",
+        riskPercent, RISK_PERCENT
+    ));
     return;
   }
 
@@ -767,11 +807,13 @@ void ProcessSignal(SignalData &signal) {
   int digits = (int)MarketInfo(signal.ticker, MODE_DIGITS);
 
   // Log trade details
-  LogTrade(StringFormat("Placing new order:" + "\nSymbol: %s" + "\nType: %s" +
-                            "\nLots: %.2f" + "\nPrice: %.*f" +
-                            "\nStop Loss: %.*f" + "\nPattern: %s",
-                        signal.ticker, cmd == OP_BUY ? "BUY" : "SELL", lotSize,
-                        digits, price, digits, sl, signal.pattern));
+  LogTrade(StringFormat(
+      "Placing new order:" + "\nSymbol: %s" + "\nType: %s" +
+      "\nLots: %.2f" + "\nPrice: %.*f" +
+      "\nStop Loss: %.*f" + "\nPattern: %s",
+      signal.ticker, cmd == OP_BUY ? "BUY" : "SELL", lotSize,
+      digits, price, digits, sl, signal.pattern
+  ));
 
   // Place the order
   int ticket =
@@ -801,11 +843,13 @@ void ProcessSignal(SignalData &signal) {
 
     if (ticket < 0) {  // Still failed after retries
       error = GetLastError();
-      LogError(StringFormat("OrderSend failed after %d retries: Error %d" +
-                                "\nDescription: %s" + "\nSymbol: %s" +
-                                "\nLots: %.2f" + "\nPrice: %.*f",
-                            MAX_RETRIES, error, ErrorDescription(error),
-                            signal.ticker, lotSize, digits, price));
+      LogError(StringFormat(
+          "OrderSend failed after %d retries: Error %d" +
+          "\nDescription: %s" + "\nSymbol: %s" +
+          "\nLots: %.2f" + "\nPrice: %.*f",
+          MAX_RETRIES, error, ErrorDescription(error),
+          signal.ticker, lotSize, digits, price
+      ));
       return;
     }
   }
@@ -814,8 +858,9 @@ void ProcessSignal(SignalData &signal) {
   if (ticket >= 0) {
     LogTrade(StringFormat(
         "Order placed successfully" + "\nTicket: %d" + "\nSymbol: %s" +
-            "\nType: %s" + "\nLots: %.2f" + "\nPrice: %.*f",
-        ticket, signal.ticker, signal.action, lotSize, digits, price));
+        "\nType: %s" + "\nLots: %.2f" + "\nPrice: %.*f",
+        ticket, signal.ticker, signal.action, lotSize, digits, price
+    ));
     lastSignalTimestamp = signal.timestamp;
   }
 }
@@ -859,7 +904,8 @@ void CheckProfitProtection() {
           "Crypto Profit Check for %s:" + "\nProfit Percent: %.2f%%" +
               "\nThreshold: %.2f%%" + "\nLock Percent: %.2f%%",
           symbol, profitPercent, CRYPTO_PROFIT_THRESHOLD,
-          CRYPTO_PROFIT_LOCK_PERCENT));
+          CRYPTO_PROFIT_LOCK_PERCENT
+      ));
 
       if (profitPercent >= CRYPTO_PROFIT_THRESHOLD) {
         double lockPrice;
@@ -873,7 +919,8 @@ void CheckProfitProtection() {
                 "Crypto Profit Protection Triggered:" + "\nSymbol: %s" +
                     "\nProfit: %.2f%%" + "\nOpen: %.2f" + "\nCurrent: %.2f" +
                     "\nLock: %.2f",
-                symbol, profitPercent, openPrice, currentPrice, lockPrice));
+                symbol, profitPercent, openPrice, currentPrice, lockPrice
+            ));
             CloseCurrentPosition(OrderTicket(), "Crypto profit protection");
           }
         } else {
@@ -885,7 +932,8 @@ void CheckProfitProtection() {
                 "Crypto Profit Protection Triggered:" + "\nSymbol: %s" +
                     "\nProfit: %.2f%%" + "\nOpen: %.2f" + "\nCurrent: %.2f" +
                     "\nLock: %.2f",
-                symbol, profitPercent, openPrice, currentPrice, lockPrice));
+                symbol, profitPercent, openPrice, currentPrice, lockPrice
+            ));
             CloseCurrentPosition(OrderTicket(), "Crypto profit protection");
           }
         }
@@ -903,7 +951,8 @@ void CheckProfitProtection() {
           StringFormat("Forex Profit Check for %s:" + "\nProfit Pips: %.1f" +
                            "\nThreshold: %.1f" + "\nLock Pips: %.1f",
                        symbol, profitInPips, FOREX_PROFIT_PIPS_THRESHOLD,
-                       FOREX_PROFIT_LOCK_PIPS));
+                       FOREX_PROFIT_LOCK_PIPS
+          ));
 
       if (profitInPips >= FOREX_PROFIT_PIPS_THRESHOLD) {
         double lockPrice;
@@ -916,7 +965,8 @@ void CheckProfitProtection() {
                 "Forex Profit Protection Triggered:" + "\nSymbol: %s" +
                     "\nProfit Pips: %.1f" + "\nOpen: %.5f" + "\nCurrent: %.5f" +
                     "\nLock: %.5f",
-                symbol, profitInPips, openPrice, currentPrice, lockPrice));
+                symbol, profitInPips, openPrice, currentPrice, lockPrice
+            ));
             CloseCurrentPosition(OrderTicket(), "Forex profit protection");
           }
         } else {
@@ -927,7 +977,8 @@ void CheckProfitProtection() {
                 "Forex Profit Protection Triggered:" + "\nSymbol: %s" +
                     "\nProfit Pips: %.1f" + "\nOpen: %.5f" + "\nCurrent: %.5f" +
                     "\nLock: %.5f",
-                symbol, profitInPips, openPrice, currentPrice, lockPrice));
+                symbol, profitInPips, openPrice, currentPrice, lockPrice
+            ));
             CloseCurrentPosition(OrderTicket(), "Forex profit protection");
           }
         }
@@ -994,7 +1045,8 @@ bool CanOpenNewPosition(string symbol) {
           "\nSymbol Risk: %.2f%% (Max: %.2f%%)" +
           "\nAccount Risk: %.2f%% (Max: %.2f%%)" + "\nBalance: $%.2f",
       symbol, symbolPositions, MAX_POSITIONS, symbolRiskPercent,
-      RISK_PERCENT * 2, accountRiskPercent, RISK_PERCENT * 3, accountBalance));
+      RISK_PERCENT * 2, accountRiskPercent, RISK_PERCENT * 3, accountBalance
+  ));
 
   // Risk limit checks
   if (symbolRiskPercent >= (RISK_PERCENT * 2)) {
@@ -1122,7 +1174,61 @@ bool ProcessClose(int ticket, int attempt, int totalTries) {
   }
 
   int error = GetLastError();
-  HandleCloseError(error, attempt, symbol, ticket);
+
+   string severity = GetErrorSeverity(error);
+
+  // Log error based on severity
+    if(severity == "CRITICAL") {
+        LogError(StringFormat(
+            "Critical error closing position:" +
+            "\nSymbol: %s" +
+            "\nTicket: %d" +
+            "\nAttempt: %d/%d" +
+            "\nError: %s" +
+            "\nSeverity: %s",
+            symbol,
+            ticket,
+            attempt,
+            totalTries,
+            ErrorDescription(error),
+            severity
+        ));
+    } else {
+        LogWarning(StringFormat(
+            "Error closing position:" +
+            "\nSymbol: %s" +
+            "\nTicket: %d" +
+            "\nAttempt: %d/%d" +
+            "\nError: %s" +
+            "\nSeverity: %s",
+            symbol,
+            ticket,
+            attempt,
+            totalTries,
+            ErrorDescription(error),
+            severity
+        ));
+    }
+
+    // Handle common error cases
+    switch(error) {
+        case ERR_TRADE_CONTEXT_BUSY:
+            Sleep(1000);
+            RefreshRates();
+            break;
+        case ERR_INVALID_PRICE:
+        case ERR_REQUOTE:
+            RefreshRates();
+            break;
+        case ERR_TOO_MANY_REQUESTS:
+            Sleep(2000);
+            break;
+        case ERR_TRADE_TIMEOUT:
+            Sleep(5000);
+            RefreshRates();
+            break;
+    }
+
   return false;
 }
 
@@ -1784,7 +1890,7 @@ void MonitorRiskLevels() {
             "\nMargin Level: %.2f%%",
         accountBalance, totalRisk, currentRiskPercent, maxAllowedRisk,
         AccountFreeMargin(),
-        AccountMargin() > 0 ? (AccountEquity() / AccountMargin() * 100) : 0));
+        AccountMargin() != 0 ? (AccountEquity() / AccountMargin() * 100) : 0));
     lastRiskCheck = currentTime;
   }
 
@@ -1879,11 +1985,9 @@ void CheckEmergencyClose() {
                            : (currentPrice - openPrice) / pipSize;
 
       // Log forex position status
-      LogDebug(StringFormat("Forex Position Check [%s]:" + "\nType: %s" +
-                                "\nPip Loss: %.1f" +
+      LogDebug(StringFormat("Forex Position Check [%s]:" + "\nPip Loss: %.1f" +
                                 "\nEmergency Threshold: %.1f pips",
-                            symbol, OrderType() == OP_BUY ? "BUY" : "SELL",
-                            MathAbs(pipLoss), FOREX_EMERGENCY_PIPS));
+                            symbol, MathAbs(pipLoss), FOREX_EMERGENCY_PIPS));
 
       if (MathAbs(pipLoss) >= FOREX_EMERGENCY_PIPS) {
         LogError(StringFormat(
@@ -1912,7 +2016,7 @@ void LogAccountStatus() {
           "\nFree Margin: %.2f" + "\nMargin Level: %.2f%%",
       AccountBalance(), AccountEquity(), AccountEquity() - AccountBalance(),
       AccountMargin(), AccountFreeMargin(),
-      AccountMargin() != 0 ? (AccountEquity() / AccountMargin()) * 100 : 0);
+      AccountMargin() != 0 ? (AccountEquity() / AccountMargin() * 100) : 0);
 
   LogInfo(metrics);
 }
