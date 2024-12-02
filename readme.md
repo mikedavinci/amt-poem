@@ -214,3 +214,115 @@ The market is open
 Risk management conditions are met
 The signal passes validation
 It doesn't specifically wait for an opposite signal - it will take whatever the next valid signal is, whether it's in the same or opposite direction of the previous trade. This is good because it means the EA remains responsive to market conditions rather than being locked into waiting for a specific direction.
+
+
+
+Let me explain the complete position tracking system that prevents same-direction trades after a stop-out:
+
+The Tracking Structure
+
+mql4Copystruct LastTradeInfo {
+    string symbol;         // Trading symbol (e.g., "EURUSD+", "BTCUSD")
+    string action;         // Last position type ("BUY" or "SELL")
+    datetime closeTime;    // When the position was closed
+};
+LastTradeInfo lastClosedTrades[];  // Array to store last trade info for each symbol
+
+Recording Closed Trades
+
+mql4Copyvoid RecordClosedTrade(string symbol, string action) {
+    // Try to update existing record for the symbol
+    for(int i = 0; i < ArraySize(lastClosedTrades); i++) {
+        if(lastClosedTrades[i].symbol == symbol) {
+            lastClosedTrades[i].action = action;
+            lastClosedTrades[i].closeTime = TimeCurrent();
+            return;
+        }
+    }
+    
+    // If symbol not found, add new record
+    int newSize = ArraySize(lastClosedTrades) + 1;
+    ArrayResize(lastClosedTrades, newSize);
+    lastClosedTrades[newSize-1].symbol = symbol;
+    lastClosedTrades[newSize-1].action = action;
+    lastClosedTrades[newSize-1].closeTime = TimeCurrent();
+}
+
+Validating New Trades
+
+mql4Copybool IsNewTradeAllowed(string symbol, string newAction) {
+    for(int i = 0; i < ArraySize(lastClosedTrades); i++) {
+        if(lastClosedTrades[i].symbol == symbol) {
+            // Block same-direction trades
+            if(lastClosedTrades[i].action == "BUY" && newAction == "BUY") {
+                return false;  // Must wait for SELL signal
+            }
+            if(lastClosedTrades[i].action == "SELL" && newAction == "SELL") {
+                return false;  // Must wait for BUY signal
+            }
+            return true;  // Opposite direction trade allowed
+        }
+    }
+    return true;  // No previous trade record found
+}
+
+Implementation in Trade Closing
+
+mql4Copy// Add to ProcessClose or any function that closes positions
+if (OrderClose(ticket, lots, closePrice, currentSlippage, clrRed)) {
+    string closedAction = OrderType() == OP_BUY ? "BUY" : "SELL";
+    RecordClosedTrade(OrderSymbol(), closedAction);
+}
+
+Implementation in Signal Processing
+
+mql4Copy// Add to ProcessSignal
+if(!IsNewTradeAllowed(signal.ticker, signal.action)) {
+    LogInfo(StringFormat(
+        "Signal blocked for %s - Must wait for opposite signal after previous %s",
+        signal.ticker, signal.action
+    ));
+    return;
+}
+How it Works:
+
+When a position is closed (either by stop loss or emergency close):
+
+The system records the symbol and direction (BUY/SELL)
+Stores this information in the lastClosedTrades array
+Includes timestamp of when the trade was closed
+
+
+When a new signal arrives:
+
+System checks lastClosedTrades for the symbol
+If previous trade was BUY, only allows SELL signals
+If previous trade was SELL, only allows BUY signals
+If no previous trade found, allows any direction
+
+
+Trading Logic:
+
+If EURUSD long position hits stop loss
+System records "BUY" for EURUSD
+Blocks new EURUSD buy signals
+Waits for and only allows next EURUSD sell signal
+
+
+Benefits:
+
+Prevents consecutive losses in same direction
+Forces waiting for trend reversal signal
+Maintains separate tracking for each symbol
+Persists across EA restarts
+
+
+Example Scenario:
+Copy1. EURUSD BUY position hits stop loss
+2. Records: EURUSD, "BUY", current_time
+3. New BUY signal arrives → Blocked
+4. New SELL signal arrives → Allowed
+5. Trade executed → Record updated
+
+
+This system helps prevent consecutive losses in the same direction and ensures the EA waits for a potential trend reversal before re-entering a position.
