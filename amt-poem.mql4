@@ -1,3 +1,10 @@
+MonitorRiskLevels() - To verify risk calculations for profitable positions
+CalculateTotalAccountRisk() - We fixed this earlier but should verify it works with the new changes
+ValidatePositionRisk() - To check how it calculates risk on open positions
+GetPositionDetails() - To make sure position stats are correct
+HasOpenPosition() - To verify position detection logic
+Any functions that calculate pip values or profit/loss metrics
+
 //+------------------------------------------------------------------+
 //|                                                   SignalReader.mq4  |
 //|                                                                    |
@@ -940,11 +947,9 @@ void CheckProfitProtection() {
     static datetime lastProfitCheck = 0;
     datetime currentTime = TimeCurrent();
 
-    // Check interval validation
     if (currentTime - lastProfitCheck < PROFIT_CHECK_INTERVAL) return;
     lastProfitCheck = currentTime;
 
-    // Early exit if profit protection disabled
     if (!ENABLE_PROFIT_PROTECTION) return;
 
     for (int i = 0; i < OrdersTotal(); i++) {
@@ -966,15 +971,20 @@ void CheckProfitProtection() {
             // Crypto pairs - Percentage based protection
             double position_value = NormalizeDouble(openPrice * OrderLots(), 8);
             double current_value = NormalizeDouble(currentPrice * OrderLots(), 8);
-            double profitPercent = NormalizeDouble(
-                ((current_value - position_value) / position_value) * 100.0,
-                2
-            );
+            
+            double profitLoss;
+            if (OrderType() == OP_BUY) {
+                profitLoss = current_value - position_value;  // Buy: Profit when current > open
+            } else {
+                profitLoss = position_value - current_value;  // Sell: Profit when current < open
+            }
+            
+            double profitPercent = NormalizeDouble((profitLoss / position_value) * 100.0, 2);
 
-            // Log profit status
             LogDebug(StringFormat(
-                "Crypto Profit Check for %s:\nProfit Percent: %.2f%%\nThreshold: %.2f%%\nLock Percent: %.2f%%",
+                "Crypto Profit Check for %s:\nType: %s\nProfit Percent: %.2f%%\nThreshold: %.2f%%\nLock Percent: %.2f%%",
                 symbol,
+                OrderType() == OP_BUY ? "BUY" : "SELL",
                 profitPercent,
                 (double)CRYPTO_PROFIT_THRESHOLD,
                 (double)CRYPTO_PROFIT_LOCK_PERCENT
@@ -984,55 +994,58 @@ void CheckProfitProtection() {
                 double lockPrice;
 
                 if (OrderType() == OP_BUY) {
-                    // For long positions
+                    // For long positions: Lock profits below current price
                     lockPrice = NormalizeDouble(
-                        openPrice * (1.0 + (CRYPTO_PROFIT_LOCK_PERCENT / 100.0)),
+                        openPrice + (openPrice * CRYPTO_PROFIT_LOCK_PERCENT / 100.0),
                         8
                     );
 
                     if (currentPrice <= lockPrice) {
                         LogTrade(StringFormat(
-                            "Crypto Profit Protection Triggered:\nSymbol: %s\nProfit: %.2f%%\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
+                            "Crypto Profit Protection Triggered:\nSymbol: %s\nType: BUY\nProfit: %.2f%%\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
                             symbol,
                             profitPercent,
                             openPrice,
                             currentPrice,
                             lockPrice
                         ), symbol);
-                    CloseCurrentPosition(symbol, OrderTicket());
+                        CloseCurrentPosition(symbol, OrderTicket());
                     }
                 } else {
-                    // For short positions
+                    // For short positions: Lock profits above current price
                     lockPrice = NormalizeDouble(
-                        openPrice * (1.0 - (CRYPTO_PROFIT_LOCK_PERCENT / 100.0)),
+                        openPrice - (openPrice * CRYPTO_PROFIT_LOCK_PERCENT / 100.0),
                         8
                     );
 
                     if (currentPrice >= lockPrice) {
                         LogTrade(StringFormat(
-                            "Crypto Profit Protection Triggered:\nSymbol: %s\nProfit: %.2f%%\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
+                            "Crypto Profit Protection Triggered:\nSymbol: %s\nType: SELL\nProfit: %.2f%%\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
                             symbol,
                             profitPercent,
                             openPrice,
                             currentPrice,
                             lockPrice
                         ), symbol);
-                         CloseCurrentPosition(symbol, OrderTicket());
+                        CloseCurrentPosition(symbol, OrderTicket());
                     }
                 }
             }
         } else {
             // Forex pairs - Pip based protection
             double pipSize = isJPYPair ? 0.01 : 0.0001;
-            double profitInPips = NormalizeDouble(
-                (OrderType() == OP_BUY ? (currentPrice - openPrice) : (openPrice - currentPrice)) / pipSize,
-                1
-            );
+            double profitInPips;
+            
+            if (OrderType() == OP_BUY) {
+                profitInPips = NormalizeDouble((currentPrice - openPrice) / pipSize, 1);
+            } else {
+                profitInPips = NormalizeDouble((openPrice - currentPrice) / pipSize, 1);
+            }
 
-            // Log profit status
             LogDebug(StringFormat(
-                "Forex Profit Check for %s:\nProfit Pips: %.1f\nThreshold: %.1f\nLock Pips: %.1f",
+                "Forex Profit Check for %s:\nType: %s\nProfit Pips: %.1f\nThreshold: %.1f\nLock Pips: %.1f",
                 symbol,
+                OrderType() == OP_BUY ? "BUY" : "SELL",
                 profitInPips,
                 (double)FOREX_PROFIT_PIPS_THRESHOLD,
                 (double)FOREX_PROFIT_LOCK_PIPS
@@ -1042,6 +1055,7 @@ void CheckProfitProtection() {
                 double lockPrice;
 
                 if (OrderType() == OP_BUY) {
+                    // For long positions: Lock profits below current price
                     lockPrice = NormalizeDouble(
                         openPrice + (FOREX_PROFIT_LOCK_PIPS * pipSize),
                         8
@@ -1049,7 +1063,7 @@ void CheckProfitProtection() {
 
                     if (currentPrice <= lockPrice) {
                         LogTrade(StringFormat(
-                            "Forex Profit Protection Triggered:\nSymbol: %s\nProfit Pips: %.1f\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
+                            "Forex Profit Protection Triggered:\nSymbol: %s\nType: BUY\nProfit Pips: %.1f\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
                             symbol,
                             profitInPips,
                             openPrice,
@@ -1059,6 +1073,7 @@ void CheckProfitProtection() {
                         CloseCurrentPosition(symbol, OrderTicket());
                     }
                 } else {
+                    // For short positions: Lock profits above current price
                     lockPrice = NormalizeDouble(
                         openPrice - (FOREX_PROFIT_LOCK_PIPS * pipSize),
                         8
@@ -1066,7 +1081,7 @@ void CheckProfitProtection() {
 
                     if (currentPrice >= lockPrice) {
                         LogTrade(StringFormat(
-                            "Forex Profit Protection Triggered:\nSymbol: %s\nProfit Pips: %.1f\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
+                            "Forex Profit Protection Triggered:\nSymbol: %s\nType: SELL\nProfit Pips: %.1f\nOpen: %.8f\nCurrent: %.8f\nLock: %.8f",
                             symbol,
                             profitInPips,
                             openPrice,
@@ -2087,21 +2102,27 @@ void CheckEmergencyClose() {
       double openValue = openPrice * lots;
 
       // Calculate actual loss in both currency and percentage terms
-      double actualLoss = OrderType() == OP_BUY ? openValue - currentValue
-                                                : currentValue - openValue;
+      double profitLoss;
+      if (OrderType() == OP_BUY) {
+          profitLoss = currentValue - openValue;  // Buy: Profit when current > open
+      } else {
+          profitLoss = openValue - currentValue;  // Sell: Profit when current < open
+      }
 
-      double lossPercent = (MathAbs(actualLoss) / openValue) * 100;
+      double lossPercent = (MathAbs(profitLoss) / openValue) * 100;
+      // Make loss percent negative if we're in profit
+      if (profitLoss > 0) lossPercent = -lossPercent;
 
       // Log current position status
       LogDebug(StringFormat(
           "Crypto Position Check [%s]:" + "\nType: %s" + "\nOpen Value: $%.2f" +
-              "\nCurrent Value: $%.2f" + "\nLoss: $%.2f (%.2f%%)" +
+              "\nCurrent Value: $%.2f" + "\nProfit/Loss: $%.2f (%.2f%%)" +
               "\nEmergency Threshold: %.2f%%",
           symbol, OrderType() == OP_BUY ? "BUY" : "SELL", openValue,
-          currentValue, MathAbs(actualLoss), lossPercent,
+          currentValue, profitLoss, lossPercent,
           EMERGENCY_CLOSE_PERCENT), symbol);
 
-      // Emergency close check
+      // Emergency close check only if we're in loss
       if (lossPercent >= EMERGENCY_CLOSE_PERCENT) {
         LogError(StringFormat(
             "CRYPTO EMERGENCY CLOSE TRIGGERED" + "\nSymbol: %s" +
@@ -2118,22 +2139,33 @@ void CheckEmergencyClose() {
     } else {
       // Forex emergency close logic
       double pipSize = isJPYPair ? 0.01 : 0.0001;
-      double pipLoss = OrderType() == OP_BUY
-                           ? (openPrice - currentPrice) / pipSize
-                           : (currentPrice - openPrice) / pipSize;
+      double profitLossPips;
+      
+      if (OrderType() == OP_BUY) {
+          // Buy: Loss when current < open
+          profitLossPips = (currentPrice - openPrice) / pipSize;  // Negative means loss
+      } else {
+          // Sell: Loss when current > open
+          profitLossPips = (openPrice - currentPrice) / pipSize;  // Negative means loss
+      }
 
       // Log forex position status
-      LogDebug(StringFormat("Forex Position Check [%s]:" + "\nPip Loss: %.1f" +
+      LogDebug(StringFormat("Forex Position Check [%s]:" + "\nType: %s" + 
+                          "\nProfit/Loss Pips: %.1f" +
                           "\nEmergency Threshold: %.1f pips",
-                      symbol, MathAbs(pipLoss), FOREX_EMERGENCY_PIPS), symbol);
+                      symbol, 
+                      OrderType() == OP_BUY ? "BUY" : "SELL",
+                      profitLossPips, 
+                      FOREX_EMERGENCY_PIPS), symbol);
 
-      if (MathAbs(pipLoss) >= FOREX_EMERGENCY_PIPS) {
+      // Emergency close check only if we're in loss (negative pips)
+      if (profitLossPips <= -FOREX_EMERGENCY_PIPS) {
         LogError(StringFormat(
             "FOREX EMERGENCY CLOSE TRIGGERED" + "\nSymbol: %s" +
-                "\nTicket: %d" + "\nType: %s" + "\nPip Loss: %.1f" +
+                "\nTicket: %d" + "\nType: %s" + "\nLoss Pips: %.1f" +
                 "\nOpen: %.5f" + "\nCurrent: %.5f" + "\nLots: %.2f",
             symbol, OrderTicket(), OrderType() == OP_BUY ? "BUY" : "SELL",
-            MathAbs(pipLoss), openPrice, currentPrice, OrderLots()), symbol);
+            MathAbs(profitLossPips), openPrice, currentPrice, OrderLots()), symbol);
 
         if (!CloseCurrentPosition(symbol)) {
           LogError(
