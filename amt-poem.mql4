@@ -1,6 +1,3 @@
-//+------------------------------------------------------------------+
-//| Expert Advisor with Enhanced Spread Validation                      |
-//+------------------------------------------------------------------+
 #property copyright "Miguel Esparza mikedavinci"
 #property link "TradeJourney.ai"
 #property version "1.00"
@@ -16,8 +13,6 @@
 bool IsSpreadAcceptable(string symbol) {
     // Calculate current spread
     double currentSpread = MarketInfo(symbol, MODE_SPREAD) * MarketInfo(symbol, MODE_POINT);
-    double currentBid = MarketInfo(symbol, MODE_BID);
-    double currentAsk = MarketInfo(symbol, MODE_ASK);
     
     // Determine pair type
     bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
@@ -27,39 +22,18 @@ bool IsSpreadAcceptable(string symbol) {
     // Set maximum allowed spread based on pair type
     double maxAllowedSpread = isCryptoPair ? CRYPTO_MAX_SPREAD : FOREX_MAX_SPREAD;
     
-    // Enhanced spread logging
-    LogDebug(StringFormat(
-        "Spread Analysis for %s:" +
-        "\nPair Type: %s" +
-        "\nBid: %.5f" +
-        "\nAsk: %.5f" +
-        "\nCurrent Spread: %.5f" +
-        "\nMaximum Allowed: %.5f",
-        symbol,
-        isCryptoPair ? "Crypto" : "Forex",
-        currentBid,
-        currentAsk,
-        currentSpread,
-        maxAllowedSpread
-    ));
-    
     // Check if spread exceeds maximum allowed
     if(currentSpread > maxAllowedSpread) {
         LogWarning(StringFormat(
-            "Trade prevented - High Spread Detected:" +
+            "Trade prevented - High Spread:" +
             "\nSymbol: %s" +
-            "\nPair Type: %s" +
             "\nCurrent Spread: %.5f" +
             "\nMaximum Allowed: %.5f" +
-            "\nExcess Amount: %.5f" +
-            "\nBid/Ask: %.5f/%.5f",
+            "\nExcess: %.5f",
             symbol,
-            isCryptoPair ? "Crypto" : "Forex",
             currentSpread,
             maxAllowedSpread,
-            currentSpread - maxAllowedSpread,
-            currentBid,
-            currentAsk
+            currentSpread - maxAllowedSpread
         ));
         return false;
     }
@@ -70,77 +44,4 @@ bool IsSpreadAcceptable(string symbol) {
     ));
     
     return true;
-}
-
-//+------------------------------------------------------------------+
-//| Helper function to verify spread conditions periodically           |
-//+------------------------------------------------------------------+
-void MonitorSpreadConditions() {
-    static datetime lastSpreadCheck = 0;
-    datetime currentTime = TimeCurrent();
-    
-    // Check spreads every minute
-    if(currentTime - lastSpreadCheck < 60) return;
-    
-    string symbols[] = {"EURUSD+", "AUDUSD+", "GBPUSD+", "BTCUSD", "ETHUSD", "LTCUSD"};
-    
-    for(int i = 0; i < ArraySize(symbols); i++) {
-        if(MarketInfo(symbols[i], MODE_BID) != 0) {  // Symbol is available
-            IsSpreadAcceptable(symbols[i]);  // This will log the spread conditions
-        }
-    }
-    
-    lastSpreadCheck = currentTime;
-}
-
-//+------------------------------------------------------------------+
-//| ProcessSignal with enhanced spread validation                      |
-//+------------------------------------------------------------------+
-void ProcessSignal(SignalData &signal) {
-    // Initial symbol validation
-    if (MarketInfo(signal.ticker, MODE_BID) == 0) {
-        LogError(StringFormat("Error: Invalid symbol %s", signal.ticker));
-        return;
-    }
-
-    // Spread validation check with enhanced logging
-    if (!IsSpreadAcceptable(signal.ticker)) {
-        LogInfo(StringFormat(
-            "Signal rejected for %s - Spread conditions not met" +
-            "\nSignal Details:" +
-            "\nAction: %s" +
-            "\nPrice: %.5f" +
-            "\nPattern: %s",
-            signal.ticker,
-            signal.action,
-            signal.price,
-            signal.pattern
-        ));
-        return;
-    }
-
-    // If spread check passes, continue with normal signal processing
-    LogInfo(StringFormat(
-        "Processing signal - Spread conditions acceptable:" +
-        "\nSymbol: %s" +
-        "\nAction: %s" +
-        "\nPrice: %.5f",
-        signal.ticker,
-        signal.action,
-        signal.price
-    ));
-
-    // Continue with the rest of signal processing...
-    // [Previous ProcessSignal Implementation]
-}
-
-//+------------------------------------------------------------------+
-//| Expert tick function                                              |
-//+------------------------------------------------------------------+
-void OnTick() {
-    // Add spread monitoring to periodic checks
-    MonitorSpreadConditions();
-    
-    // Continue with regular OnTick processing...
-    // [Previous OnTick Implementation]
 }
