@@ -1,170 +1,58 @@
-// Add new instrument specification constants
-#define CRYPTO_DIGITS 2           // Crypto pairs digits
-#define FOREX_DIGITS 5            // Forex pairs digits
-#define LTC_CONTRACT_SIZE 100     // LTCUSD contract size
-#define BTC_ETH_CONTRACT_SIZE 1   // BTCUSD and ETHUSD contract size
-#define FOREX_MAX_SPREAD 0.00025  // Maximum allowed spread for forex (2.5 pips)
-#define CRYPTO_MAX_SPREAD 5.0     // Maximum allowed spread for crypto (5.0 points)
+//+------------------------------------------------------------------+
+//| Instrument Specifications and Constants                             |
+//+------------------------------------------------------------------+
+#define FOREX_MAX_SPREAD 0.00025  // 2.5 pips for 5-digit pairs
+#define CRYPTO_MAX_SPREAD 5.0     // 5.0 points for 2-digit pairs
 
 //+------------------------------------------------------------------+
-//| Helper function to check spread conditions                         |
+//| Spread Validation Function                                         |
 //+------------------------------------------------------------------+
 bool IsSpreadAcceptable(string symbol) {
+    // Get current spread in points
     double currentSpread = MarketInfo(symbol, MODE_SPREAD) * MarketInfo(symbol, MODE_POINT);
+    
+    // Determine pair type
     bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
                         StringFind(symbol, "ETH") >= 0 || 
                         StringFind(symbol, "LTC") >= 0);
     
+    // Set maximum allowed spread based on pair type
     double maxAllowedSpread = isCryptoPair ? CRYPTO_MAX_SPREAD : FOREX_MAX_SPREAD;
     
+    // Check if spread exceeds maximum allowed
     if(currentSpread > maxAllowedSpread) {
         LogWarning(StringFormat(
-            "Trade prevented - Spread too high for %s:" +
+            "Trade prevented - Spread exceeds maximum allowed for %s:" +
             "\nCurrent Spread: %.5f" +
             "\nMaximum Allowed: %.5f" +
-            "\nSpread Excess: %.5f",
-            symbol, 
-            currentSpread, 
+            "\nExcess Amount: %.5f" +
+            "\nPair Type: %s",
+            symbol,
+            currentSpread,
             maxAllowedSpread,
-            currentSpread - maxAllowedSpread
+            currentSpread - maxAllowedSpread,
+            isCryptoPair ? "Crypto" : "Forex"
         ));
         return false;
     }
     
+    // Log successful spread check
     LogDebug(StringFormat(
         "Spread check passed for %s:" +
         "\nCurrent Spread: %.5f" +
-        "\nMaximum Allowed: %.5f",
-        symbol, currentSpread, maxAllowedSpread
+        "\nMaximum Allowed: %.5f" +
+        "\nPair Type: %s",
+        symbol,
+        currentSpread,
+        maxAllowedSpread,
+        isCryptoPair ? "Crypto" : "Forex"
     ));
     
     return true;
 }
 
 //+------------------------------------------------------------------+
-//| Get contract specifications for symbol                            |
-//+------------------------------------------------------------------+
-void GetContractSpecs(string symbol, double &contractSize, int &digits) {
-    // Set digits based on pair type
-    if(StringFind(symbol, "BTC") >= 0 || 
-       StringFind(symbol, "ETH") >= 0 || 
-       StringFind(symbol, "LTC") >= 0) {
-        digits = CRYPTO_DIGITS;
-        
-        // Set contract size for crypto pairs
-        if(StringFind(symbol, "LTC") >= 0) {
-            contractSize = LTC_CONTRACT_SIZE;
-        } else {
-            contractSize = BTC_ETH_CONTRACT_SIZE;
-        }
-    } else {
-        digits = FOREX_DIGITS;
-        contractSize = 100000; // Standard forex contract size
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Calculate position size based on risk and stop loss                |
-//+------------------------------------------------------------------+
-double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) {
-    // Get contract specifications
-    double contractSize;
-    int digits;
-    GetContractSpecs(symbol, contractSize, digits);
-    
-    // Calculate maximum risk amount based on account balance
-    double accountBalance = AccountBalance();
-    double maxRiskAmount = accountBalance * (RISK_PERCENT / 100);
-    
-    // Calculate stop loss distance in price terms
-    double stopDistance = MathAbs(entryPrice - stopLoss);
-    
-    if (stopDistance == 0) {
-        LogError("Error: Stop loss distance cannot be zero");
-        return 0;
-    }
-    
-    bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
-                        StringFind(symbol, "ETH") >= 0 || 
-                        StringFind(symbol, "LTC") >= 0);
-    
-    LogDebug(StringFormat(
-        "Position Size Calculation Starting:" +
-        "\nSymbol: %s" +
-        "\nContract Size: %.2f" +
-        "\nDigits: %d" +
-        "\nAccount Balance: $%.2f" +
-        "\nRisk Amount: $%.2f" +
-        "\nEntry Price: %.*f" +
-        "\nStop Loss: %.*f" +
-        "\nStop Distance: %.*f",
-        symbol, contractSize, digits, accountBalance, maxRiskAmount, 
-        digits, entryPrice, digits, stopLoss, digits, stopDistance
-    ));
-    
-    double lotSize;
-    
-    if (isCryptoPair) {
-        // CRYPTO POSITION SIZING
-        double oneUnitValue = entryPrice * contractSize;
-        double riskPerLot = stopDistance * oneUnitValue;
-        
-        // Initial lot size based on risk and contract size
-        lotSize = maxRiskAmount / riskPerLot;
-        
-        // Maximum position value based on RISK_PERCENT
-        double maxPositionValue = AccountEquity() * (RISK_PERCENT * 2 / 100);
-        double maxLotsBasedOnEquity = maxPositionValue / oneUnitValue;
-        
-        // Margin checks
-        double marginRequired = MarketInfo(symbol, MODE_MARGINREQUIRED);
-        if (marginRequired > 0) {
-            double maxLotsBasedOnMargin = AccountFreeMargin() / (marginRequired * 1.5);
-            maxLotsBasedOnEquity = MathMin(maxLotsBasedOnEquity, maxLotsBasedOnMargin);
-            
-            LogDebug(StringFormat(
-                "Margin Calculations:" +
-                "\nMargin Required: %.2f" +
-                "\nFree Margin: %.2f" +
-                "\nMax Lots (Margin): %.4f",
-                marginRequired, AccountFreeMargin(), maxLotsBasedOnMargin
-            ));
-        }
-        
-        // Apply position size limits
-        lotSize = MathMin(lotSize, maxLotsBasedOnEquity);
-        
-        // Apply broker limits
-        double minLot = MarketInfo(symbol, MODE_MINLOT);
-        double maxLot = MarketInfo(symbol, MODE_MAXLOT);
-        lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
-        
-        // Calculate actual risk
-        double actualRiskAmount = lotSize * riskPerLot;
-        double actualRiskPercent = (actualRiskAmount / AccountBalance()) * 100;
-        
-        LogDebug(StringFormat(
-            "Crypto Position Size Result:" +
-            "\nContract Size: %.2f" +
-            "\nOne Unit Value: $%.2f" +
-            "\nRisk Per Lot: $%.2f" +
-            "\nFinal Size: %.4f" +
-            "\nActual Risk Amount: $%.2f" +
-            "\nActual Risk Percent: %.2f%%",
-            contractSize, oneUnitValue, riskPerLot, lotSize,
-            actualRiskAmount, actualRiskPercent
-        ));
-        
-    } else {
-        // Existing forex position sizing logic
-        // ... [Previous forex calculation code remains unchanged]
-    }
-    
-    return lotSize;
-}
-
-//+------------------------------------------------------------------+
-//| Process trading signal                                            |
+//| Implement spread validation in ProcessSignal                       |
 //+------------------------------------------------------------------+
 void ProcessSignal(SignalData &signal) {
     // Initial symbol validation
@@ -172,26 +60,16 @@ void ProcessSignal(SignalData &signal) {
         LogError(StringFormat("Error: Invalid symbol %s", signal.ticker));
         return;
     }
-    
-    // Spread validation - prevent trading if spread is too high
+
+    // Spread validation check
     if (!IsSpreadAcceptable(signal.ticker)) {
-        return; // Spread check failed, logging handled in IsSpreadAcceptable
+        LogInfo(StringFormat(
+            "Signal processing halted for %s due to unacceptable spread conditions",
+            signal.ticker
+        ));
+        return;
     }
-    
-    // Get contract specifications for proper formatting
-    double contractSize;
-    int digits;
-    GetContractSpecs(signal.ticker, contractSize, digits);
-    
-    // Rest of the ProcessSignal function with updated digit handling
-    LogTrade(StringFormat(
-        "Processing signal for %s:" +
-        "\nAction: %s" +
-        "\nPrice: %.*f" +
-        "\nContract Size: %.2f",
-        signal.ticker, signal.action, digits, signal.price, contractSize
-    ));
-    
-    // Continue with existing ProcessSignal logic
-    // ... [Rest of the ProcessSignal implementation]
+
+    // Continue with existing ProcessSignal logic...
+    [Previous ProcessSignal Implementation]
 }
