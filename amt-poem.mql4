@@ -18,7 +18,14 @@ Any functions that calculate pip values or profit/loss metrics
 #define ERR_CUSTOM_START 65536
 #define ERR_CUSTOM_ERROR (ERR_CUSTOM_START + 1)
 #define ERR_CUSTOM_CRITICAL (ERR_CUSTOM_START + 2)
-
+#define FOREX_CONTRACT_SIZE 100000
+#define CRYPTO_CONTRACT_SIZE_LTC 100
+#define CRYPTO_CONTRACT_SIZE_DEFAULT 1
+#define CRYPTO_MARGIN_PERCENT_LTC 0.01
+#define CRYPTO_MARGIN_PERCENT_DEFAULT 0.003
+#define FOREX_MARGIN_PERCENT 1.0
+#define CRYPTO_DIGITS 2
+#define FOREX_DIGITS 5
 // Signal Data Structure
 struct SignalData {
   string ticker;     // Trading symbol
@@ -476,6 +483,39 @@ bool ParseSignal(string &jsonString, SignalData &signal) {
     return false;
   }
 
+  // Add price validation and normalization
+  bool isCryptoPair = (StringFind(signal.ticker, "BTC") >= 0 || 
+                      StringFind(signal.ticker, "ETH") >= 0 || 
+                      StringFind(signal.ticker, "LTC") >= 0);
+  bool isJPYPair = (StringFind(signal.ticker, "JPY") >= 0);
+  int expectedDigits = isJPYPair ? 3 : (isCryptoPair ? 2 : 5);
+  
+  // Normalize price to expected digits
+  signal.price = NormalizeDouble(signal.price, expectedDigits);
+  
+  // Validate price against current market price
+  double currentBid = MarketInfo(signal.ticker, MODE_BID);
+  double currentAsk = MarketInfo(signal.ticker, MODE_ASK);
+  double priceDeviation = MathAbs(signal.price - ((currentBid + currentAsk) / 2));
+  double maxDeviation = isCryptoPair ? 100 : (isJPYPair ? 0.5 : 0.005);
+  
+  if (priceDeviation > maxDeviation) {
+      LogWarning(StringFormat(
+          "Signal price deviation warning for %s:" +
+          "\nSignal Price: %.*f" +
+          "\nCurrent Bid: %.*f" +
+          "\nCurrent Ask: %.*f" +
+          "\nDeviation: %.*f" +
+          "\nMax Allowed: %.*f",
+          signal.ticker,
+          expectedDigits, signal.price,
+          expectedDigits, currentBid,
+          expectedDigits, currentAsk,
+          expectedDigits, priceDeviation,
+          expectedDigits, maxDeviation
+      ));
+  }
+
   // Set remaining signal data
   signal.action = action;
   signal.timestamp = timestamp;
@@ -483,7 +523,9 @@ bool ParseSignal(string &jsonString, SignalData &signal) {
 
   // Log successful parse with actual values
   LogDebug(StringFormat("Signal Parsed Successfully:" + "\nSymbol: %s" +
-                            "\nAction: %s" + "\nPrice: %.2f" + "\nPattern: %s" +
+                            "\nAction: %s" +
+                            "\nPrice: %.2f" +
+                            "\nPattern: %s" +
                             "\nTimestamp: %s",
                         signal.ticker, signal.action, signal.price,
                         signal.pattern, signal.timestamp));
@@ -527,30 +569,45 @@ double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) 
 
     if (isCryptoPair) {
         // CRYPTO POSITION SIZING
-        double oneUnitValue = entryPrice;
+        double contractSize = 1;  // Default for BTC/ETH
+        double marginPercentage = 0.003;  // Default 0.3% for BTC/ETH
         
-        // Calculate true USD risk per lot considering price
-        double riskPerLot = stopDistance * oneUnitValue;  // True USD risk per lot
+        // Adjust for LTC
+        if (StringFind(symbol, "LTC") >= 0) {
+            contractSize = 100;   // LTC specific
+            marginPercentage = 0.01;  // 1% for LTC
+        }
+        
+        // Calculate true USD risk per lot considering contract size
+        double oneUnitValue = entryPrice * contractSize;
+        double riskPerLot = stopDistance * oneUnitValue;
         
         // Initial lot size based on risk
         lotSize = maxRiskAmount / riskPerLot;
         
-        // Maximum position value based on RISK_PERCENT
-        double maxPositionValue = AccountEquity() * (RISK_PERCENT * 2 / 100);  // 2x RISK_PERCENT
+        // Maximum position value based on RISK_PERCENT and margin requirements
+        double maxPositionValue = AccountEquity() * (RISK_PERCENT * 2 / 100);
         double maxLotsBasedOnEquity = maxPositionValue / oneUnitValue;
         
-        // Margin checks
-        double marginRequired = MarketInfo(symbol, MODE_MARGINREQUIRED);
+        // Enhanced margin checks with specific requirements
+        double marginRequired = oneUnitValue * marginPercentage;
         if (marginRequired > 0) {
-            double maxLotsBasedOnMargin = AccountFreeMargin() / (marginRequired * 1.5);  // 150% margin reserve
+            double maxLotsBasedOnMargin = AccountFreeMargin() / (marginRequired * 1.5);
             maxLotsBasedOnEquity = MathMin(maxLotsBasedOnEquity, maxLotsBasedOnMargin);
             
             LogDebug(StringFormat(
-            "Margin Calculations:" +
-            "\nMargin Required: %.2f" +
-            "\nFree Margin: %.2f" +
-            "\nMax Lots (Margin): %.4f",
-            marginRequired, AccountFreeMargin(), maxLotsBasedOnMargin));
+                "Crypto Margin Calculations:" +
+                "\nContract Size: %.2f" +
+                "\nMargin Percentage: %.3f%%" +
+                "\nMargin Required per Lot: $%.2f" +
+                "\nFree Margin: $%.2f" +
+                "\nMax Lots (Margin): %.4f",
+                contractSize,
+                marginPercentage * 100,
+                marginRequired,
+                AccountFreeMargin(),
+                maxLotsBasedOnMargin
+            ));
         }
         
         // Take the minimum of risk-based size and safety limits
