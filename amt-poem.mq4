@@ -232,6 +232,432 @@ string EscapeJsonString(string str) {
   return result;
 }
 
+
+//+------------------------------------------------------------------+
+//| Signal Processing Functions                                              |
+//+------------------------------------------------------------------+
+string FetchSignals(string url) {
+   string headers = "Content-Type: application/json\r\n";
+   char post[];
+   char result[];
+   string resultHeaders;
+   
+   int res = WebRequest(
+      "GET",                   // Method
+      url,                     // URL
+      headers,                 // Headers
+      5000,                    // Timeout
+      post,                    // POST data
+      result,                  // Server response
+      resultHeaders            // Response headers
+   );
+   
+   if(res == -1) {
+      int errorCode = GetLastError();
+      LogError(StringFormat("Error in WebRequest. Error code: %d", errorCode));
+      return "";
+   }
+   
+   string response = CharArrayToString(result);
+   LogDebug(StringFormat("API Response: %s", response));
+   return response;
+}
+
+//+------------------------------------------------------------------+
+//| Parse JSON signal                                                 |
+//+------------------------------------------------------------------+
+bool ParseSignal(string &jsonString, SignalData &signal) {
+    // Remove array brackets if present
+    string json = jsonString;
+    if(StringGetChar(json, 0) == '[') {
+        json = StringSubstr(json, 1, StringLen(json) - 2);
+    }
+
+    LogDebug("Parsing JSON: " + json);
+
+    // Extract and validate required fields
+    string ticker = GetJsonValue(json, "ticker");
+    string action = GetJsonValue(json, "action");
+    string priceStr = GetJsonValue(json, "price");
+    string timestamp = GetJsonValue(json, "timestamp");
+    string pattern = GetJsonValue(json, "signalPattern");
+
+    // Validate required fields
+    if(ticker == "" || action == "" || priceStr == "") {
+        LogError("Missing required signal fields");
+        return false;
+    }
+
+    // Validate action type
+    if(action != "BUY" && action != "SELL" && action != "NEUTRAL") {
+        LogError("Invalid action type: " + action);
+        return false;
+    }
+
+    // Format ticker based on pair type
+    signal.ticker = (StringFind(ticker, "BTC") >= 0 || 
+                    StringFind(ticker, "ETH") >= 0 || 
+                    StringFind(ticker, "LTC") >= 0) ? ticker : ticker + "+";
+
+    // Validate symbol exists
+    if(MarketInfo(signal.ticker, MODE_BID) == 0) {
+        LogError("Invalid symbol in signal: " + signal.ticker);
+        return false;
+    }
+
+    // Get the correct number of digits for the symbol
+    int symbolDigits = GetSymbolDigits(signal.ticker);
+    
+    // Convert and validate price
+    signal.price = NormalizeDouble(StringToDouble(priceStr), symbolDigits);
+    if(signal.price <= 0) {
+        LogError(StringFormat("Invalid price value: %s", priceStr));
+        return false;
+    }
+
+    // Validate price against current market price
+    double currentBid = MarketInfo(signal.ticker, MODE_BID);
+    double currentAsk = MarketInfo(signal.ticker, MODE_ASK);
+    double spread = NormalizeDouble(currentAsk - currentBid, symbolDigits);
+    double averagePrice = NormalizeDouble((currentBid + currentAsk) / 2, symbolDigits);
+    
+    // Calculate maximum allowed deviation based on instrument type
+    double maxDeviation;
+    if(StringFind(signal.ticker, "BTC") >= 0 || 
+       StringFind(signal.ticker, "ETH") >= 0 || 
+       StringFind(signal.ticker, "LTC") >= 0) {
+        maxDeviation = 100;  // $100 for crypto
+    } else if(StringFind(signal.ticker, "JPY") >= 0) {
+        maxDeviation = 0.5;  // 50 pips for JPY pairs
+    } else {
+        maxDeviation = 0.005;  // 50 pips for regular forex
+    }
+
+    double priceDeviation = MathAbs(signal.price - averagePrice);
+    if(priceDeviation > maxDeviation) {
+        LogWarning(StringFormat(
+            "Large price deviation detected for %s:" +
+            "\nSignal Price: %.*f" +
+            "\nMarket Price: %.*f" +
+            "\nDeviation: %.*f" +
+            "\nSpread: %.*f" +
+            "\nMax Allowed: %.*f",
+            signal.ticker,
+            symbolDigits, signal.price,
+            symbolDigits, averagePrice,
+            symbolDigits, priceDeviation,
+            symbolDigits, spread,
+            symbolDigits, maxDeviation
+        ));
+    }
+
+    // Set remaining signal data
+    signal.action = action;
+    signal.timestamp = timestamp;
+    signal.pattern = pattern;
+
+    LogDebug(StringFormat(
+        "Signal Parsed Successfully:" +
+        "\nSymbol: %s" +
+        "\nAction: %s" +
+        "\nPrice: %.*f" +
+        "\nDigits: %d" +
+        "\nContract Size: %.2f" +
+        "\nMargin Requirement: %.2f%%",
+        signal.ticker,
+        signal.action,
+        symbolDigits, signal.price,
+        symbolDigits,
+        GetContractSize(signal.ticker),
+        GetMarginPercent(signal.ticker) * 100
+    ));
+
+    return true;
+}
+
+
+//+------------------------------------------------------------------+
+//| Trade Management Functions               |
+//+------------------------------------------------------------------+
+double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) {
+    // Calculate maximum risk amount based on account balance
+    double accountBalance = AccountBalance();
+    double maxRiskAmount = accountBalance * (RISK_PERCENT / 100);
+    double stopDistance = MathAbs(entryPrice - stopLoss);
+
+    if (stopDistance == 0) {
+        LogError("Error: Stop loss distance cannot be zero");
+        return 0;
+    }
+
+    bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
+                        StringFind(symbol, "ETH") >= 0 || 
+                        StringFind(symbol, "LTC") >= 0);
+    bool isJPYPair = (StringFind(symbol, "JPY") >= 0);
+    int digits = GetSymbolDigits(symbol);
+    double contractSize = GetContractSize(symbol);
+    double marginPercent = GetMarginPercent(symbol);
+
+    LogDebug(StringFormat(
+        "Position Size Calculation Starting:" +
+        "\nSymbol: %s" +
+        "\nContract Size: %.2f" +
+        "\nMargin Requirement: %.2f%%" +
+        "\nAccount Balance: $%.2f" +
+        "\nRisk Amount: $%.2f" +
+        "\nEntry Price: %.*f" +
+        "\nStop Loss: %.*f" +
+        "\nStop Distance: %.*f",
+        symbol, 
+        contractSize,
+        marginPercent * 100,
+        accountBalance, 
+        maxRiskAmount, 
+        digits, entryPrice,
+        digits, stopLoss,
+        digits, stopDistance
+    ), symbol);
+
+    double lotSize;
+
+    if (isCryptoPair) {
+        // Calculate true USD risk per lot considering contract size
+        double oneUnitValue = entryPrice * contractSize;
+        double riskPerLot = stopDistance * oneUnitValue;
+        
+        // Initial lot size based on risk
+        lotSize = maxRiskAmount / riskPerLot;
+        
+        // Calculate margin requirement per lot
+        double marginRequired = oneUnitValue * marginPercent;
+        
+        // Maximum position value based on available margin with safety buffer
+        double maxPositionValue = AccountFreeMargin() / (marginPercent * 1.5); // 150% margin reserve
+        double maxLotsBasedOnMargin = maxPositionValue / oneUnitValue;
+        
+        // Maximum position based on account equity (prevent over-leverage)
+        double maxEquityPercent = RISK_PERCENT * 2; // 2x risk percent for max position size
+        double maxPositionEquity = AccountEquity() * (maxEquityPercent / 100);
+        double maxLotsBasedOnEquity = maxPositionEquity / oneUnitValue;
+        
+        // Take the minimum of all constraints
+        lotSize = MathMin(lotSize, maxLotsBasedOnMargin);
+        lotSize = MathMin(lotSize, maxLotsBasedOnEquity);
+        
+        LogDebug(StringFormat(
+            "Crypto Position Size Calculation:" +
+            "\nOne Unit Value: $%.2f" +
+            "\nRisk Per Lot: $%.2f" +
+            "\nMargin Required Per Lot: $%.2f" +
+            "\nMax Lots (Margin): %.4f" +
+            "\nMax Lots (Equity): %.4f" +
+            "\nSelected Size: %.4f",
+            oneUnitValue,
+            riskPerLot,
+            marginRequired,
+            maxLotsBasedOnMargin,
+            maxLotsBasedOnEquity,
+            lotSize
+        ));
+    } else {
+        // Forex position sizing
+        double point = MarketInfo(symbol, MODE_POINT);
+        double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
+        double pipSize = isJPYPair ? 0.01 : 0.0001;
+        double pipValue = isJPYPair ? (tickValue * 100) : (tickValue * 10);
+        double stopPoints = stopDistance / point;
+        
+        // Calculate risk per standard lot
+        double riskPerLot = stopPoints * tickValue;
+        
+        // Initial lot size based on risk
+        lotSize = maxRiskAmount / riskPerLot;
+        
+        // Calculate margin requirement per lot
+        double marginRequired = contractSize * entryPrice * marginPercent;
+        double maxLotsBasedOnMargin = AccountFreeMargin() / (marginRequired * 1.5);
+        
+        // Maximum position based on account equity
+        double maxEquityPercent = RISK_PERCENT * 2;
+        double maxPositionEquity = AccountEquity() * (maxEquityPercent / 100);
+        double maxLotsBasedOnEquity = maxPositionEquity / (contractSize * entryPrice);
+        
+        // Apply all constraints
+        lotSize = MathMin(lotSize, maxLotsBasedOnMargin);
+        lotSize = MathMin(lotSize, maxLotsBasedOnEquity);
+        
+        LogDebug(StringFormat(
+            "Forex Position Size Calculation:" +
+            "\nStop Distance (points): %.1f" +
+            "\nPip Value: $%.5f" +
+            "\nRisk Per Lot: $%.2f" +
+            "\nMargin Required Per Lot: $%.2f" +
+            "\nMax Lots (Margin): %.2f" +
+            "\nMax Lots (Equity): %.2f" +
+            "\nSelected Size: %.2f",
+            stopPoints,
+            pipValue,
+            riskPerLot,
+            marginRequired,
+            maxLotsBasedOnMargin,
+            maxLotsBasedOnEquity,
+            lotSize
+        ));
+    }
+    
+    // Apply broker constraints
+    double minLot = MarketInfo(symbol, MODE_MINLOT);
+    double maxLot = MarketInfo(symbol, MODE_MAXLOT);
+    double lotStep = MarketInfo(symbol, MODE_LOTSTEP);
+    
+    // Round to lot step
+    lotSize = MathFloor(lotSize / lotStep) * lotStep;
+    
+    // Ensure within broker's limits
+    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
+    
+    // Calculate and validate final risk
+    double finalRisk = CalculateFinalPositionRisk(symbol, lotSize, entryPrice, stopLoss);
+    double finalRiskPercent = (finalRisk / accountBalance) * 100;
+    
+    LogDebug(StringFormat(
+        "Final Position Size:" +
+        "\nLot Size: %.4f" +
+        "\nActual Risk Amount: $%.2f" +
+        "\nRisk Percent: %.2f%%",
+        lotSize,
+        finalRisk,
+        finalRiskPercent
+    ));
+    
+    return lotSize;
+}
+
+
+//+------------------------------------------------------------------+
+//| Calculate Stop Loss price based on pair type                       |
+//+------------------------------------------------------------------+
+double CalculateStopLoss(string symbol, int cmd, double entryPrice) {
+    // Validate entry price
+    if (entryPrice <= 0) {
+        LogError(StringFormat("Invalid entry price for %s: %.5f", symbol, entryPrice));
+        return 0;
+    }
+    
+    // Get instrument specifications
+    int digits = GetSymbolDigits(symbol);
+    bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
+                        StringFind(symbol, "ETH") >= 0 || 
+                        StringFind(symbol, "LTC") >= 0);
+    bool isJPYPair = (StringFind(symbol, "JPY") >= 0);
+    double contractSize = GetContractSize(symbol);
+    double point = MarketInfo(symbol, MODE_POINT);
+    
+    double stopLoss = 0;
+    
+    // Calculate stop loss based on instrument type
+    if (isCryptoPair) {
+        // Percentage-based stop for crypto
+        double stopDistance = entryPrice * (CRYPTO_STOP_PERCENT / 100);
+        stopLoss = cmd == OP_BUY ? 
+                  NormalizeDouble(entryPrice - stopDistance, digits) :
+                  NormalizeDouble(entryPrice + stopDistance, digits);
+        
+        // Calculate monetary value of stop loss
+        double stopValue = stopDistance * contractSize;
+        
+        LogDebug(StringFormat(
+            "Crypto Stop Loss Calculation [%s]:" +
+            "\nDirection: %s" +
+            "\nEntry Price: %.*f" +
+            "\nStop Loss: %.*f" +
+            "\nStop Distance: %.*f" +
+            "\nStop Percent: %.2f%%" +
+            "\nContract Size: %.2f" +
+            "\nStop Value: $%.2f",
+            symbol,
+            cmd == OP_BUY ? "BUY" : "SELL",
+            digits, entryPrice,
+            digits, stopLoss,
+            digits, stopDistance,
+            CRYPTO_STOP_PERCENT,
+            contractSize,
+            stopValue
+        ));
+    } else {
+        // Pip-based stop for forex
+        double pipSize = isJPYPair ? 0.01 : 0.0001;
+        double pipValue = MarketInfo(symbol, MODE_TICKVALUE) * (isJPYPair ? 100 : 10);
+        double stopPips = FOREX_STOP_PIPS;
+        double stopDistance = stopPips * pipSize;
+        
+        stopLoss = cmd == OP_BUY ? 
+                  NormalizeDouble(entryPrice - stopDistance, digits) :
+                  NormalizeDouble(entryPrice + stopDistance, digits);
+                  
+        // Calculate monetary value of stop loss
+        double stopValue = FOREX_STOP_PIPS * pipValue * (contractSize / 100000.0);
+        
+        LogDebug(StringFormat(
+            "Forex Stop Loss Calculation [%s]:" +
+            "\nDirection: %s" +
+            "\nEntry Price: %.*f" +
+            "\nStop Loss: %.*f" +
+            "\nStop Distance: %.*f" +
+            "\nStop Pips: %.1f" +
+            "\nPip Value: $%.5f" +
+            "\nStop Value: $%.2f",
+            symbol,
+            cmd == OP_BUY ? "BUY" : "SELL",
+            digits, entryPrice,
+            digits, stopLoss,
+            digits, stopDistance,
+            stopPips,
+            pipValue,
+            stopValue
+        ));
+    }
+    
+    // Validation checks
+    if (cmd == OP_BUY && stopLoss >= entryPrice) {
+        LogError(StringFormat(
+            "Invalid buy stop loss - must be below entry price:" +
+            "\nEntry: %.*f" +
+            "\nStop: %.*f",
+            digits, entryPrice,
+            digits, stopLoss
+        ));
+        return 0;
+    }
+    
+    if (cmd == OP_SELL && stopLoss <= entryPrice) {
+        LogError(StringFormat(
+            "Invalid sell stop loss - must be above entry price:" +
+            "\nEntry: %.*f" +
+            "\nStop: %.*f",
+            digits, entryPrice,
+            digits, stopLoss
+        ));
+        return 0;
+    }
+    
+    // Check minimum stop distance
+    double minStop = MarketInfo(symbol, MODE_STOPLEVEL) * point;
+    if (MathAbs(entryPrice - stopLoss) < minStop) {
+        LogError(StringFormat(
+            "Stop loss too close to entry price:" +
+            "\nMinimum distance: %.*f" +
+            "\nActual distance: %.*f",
+            digits, minStop,
+            digits, MathAbs(entryPrice - stopLoss)
+        ));
+        return 0;
+    }
+    
+    return stopLoss;
+}
+
+
 //+------------------------------------------------------------------+
 //| Send Log to Papertrail                                            |
 //+------------------------------------------------------------------+
@@ -580,304 +1006,9 @@ bool IsTimeToCheck() {
     return true;
 }
 
-//+------------------------------------------------------------------+
-//| Fetch signals from API                                            |
-//+------------------------------------------------------------------+
-string FetchSignals(string url) {
-   string headers = "Content-Type: application/json\r\n";
-   char post[];
-   char result[];
-   string resultHeaders;
-   
-   int res = WebRequest(
-      "GET",                   // Method
-      url,                     // URL
-      headers,                 // Headers
-      5000,                    // Timeout
-      post,                    // POST data
-      result,                  // Server response
-      resultHeaders            // Response headers
-   );
-   
-   if(res == -1) {
-      int errorCode = GetLastError();
-      LogError(StringFormat("Error in WebRequest. Error code: %d", errorCode));
-      return "";
-   }
-   
-   string response = CharArrayToString(result);
-   LogDebug(StringFormat("API Response: %s", response));
-   return response;
-}
 
-//+------------------------------------------------------------------+
-//| Parse JSON signal                                                 |
-//+------------------------------------------------------------------+
-bool ParseSignal(string &jsonString, SignalData &signal) {
-    // Remove array brackets if present
-    string json = jsonString;
-    if(StringGetChar(json, 0) == '[') {
-        json = StringSubstr(json, 1, StringLen(json) - 2);
-    }
 
-    LogDebug("Parsing JSON: " + json);
 
-    // Extract and validate required fields
-    string ticker = GetJsonValue(json, "ticker");
-    string action = GetJsonValue(json, "action");
-    string priceStr = GetJsonValue(json, "price");
-    string timestamp = GetJsonValue(json, "timestamp");
-    string pattern = GetJsonValue(json, "signalPattern");
-
-    // Validate required fields
-    if(ticker == "" || action == "" || priceStr == "") {
-        LogError("Missing required signal fields");
-        return false;
-    }
-
-    // Validate action type
-    if(action != "BUY" && action != "SELL" && action != "NEUTRAL") {
-        LogError("Invalid action type: " + action);
-        return false;
-    }
-
-    // Format ticker based on pair type
-    signal.ticker = (StringFind(ticker, "BTC") >= 0 || 
-                    StringFind(ticker, "ETH") >= 0 || 
-                    StringFind(ticker, "LTC") >= 0) ? ticker : ticker + "+";
-
-    // Validate symbol exists
-    if(MarketInfo(signal.ticker, MODE_BID) == 0) {
-        LogError("Invalid symbol in signal: " + signal.ticker);
-        return false;
-    }
-
-    // Get the correct number of digits for the symbol
-    int symbolDigits = GetSymbolDigits(signal.ticker);
-    
-    // Convert and validate price
-    signal.price = NormalizeDouble(StringToDouble(priceStr), symbolDigits);
-    if(signal.price <= 0) {
-        LogError(StringFormat("Invalid price value: %s", priceStr));
-        return false;
-    }
-
-    // Validate price against current market price
-    double currentBid = MarketInfo(signal.ticker, MODE_BID);
-    double currentAsk = MarketInfo(signal.ticker, MODE_ASK);
-    double spread = NormalizeDouble(currentAsk - currentBid, symbolDigits);
-    double averagePrice = NormalizeDouble((currentBid + currentAsk) / 2, symbolDigits);
-    
-    // Calculate maximum allowed deviation based on instrument type
-    double maxDeviation;
-    if(StringFind(signal.ticker, "BTC") >= 0 || 
-       StringFind(signal.ticker, "ETH") >= 0 || 
-       StringFind(signal.ticker, "LTC") >= 0) {
-        maxDeviation = 100;  // $100 for crypto
-    } else if(StringFind(signal.ticker, "JPY") >= 0) {
-        maxDeviation = 0.5;  // 50 pips for JPY pairs
-    } else {
-        maxDeviation = 0.005;  // 50 pips for regular forex
-    }
-
-    double priceDeviation = MathAbs(signal.price - averagePrice);
-    if(priceDeviation > maxDeviation) {
-        LogWarning(StringFormat(
-            "Large price deviation detected for %s:" +
-            "\nSignal Price: %.*f" +
-            "\nMarket Price: %.*f" +
-            "\nDeviation: %.*f" +
-            "\nSpread: %.*f" +
-            "\nMax Allowed: %.*f",
-            signal.ticker,
-            symbolDigits, signal.price,
-            symbolDigits, averagePrice,
-            symbolDigits, priceDeviation,
-            symbolDigits, spread,
-            symbolDigits, maxDeviation
-        ));
-    }
-
-    // Set remaining signal data
-    signal.action = action;
-    signal.timestamp = timestamp;
-    signal.pattern = pattern;
-
-    LogDebug(StringFormat(
-        "Signal Parsed Successfully:" +
-        "\nSymbol: %s" +
-        "\nAction: %s" +
-        "\nPrice: %.*f" +
-        "\nDigits: %d" +
-        "\nContract Size: %.2f" +
-        "\nMargin Requirement: %.2f%%",
-        signal.ticker,
-        signal.action,
-        symbolDigits, signal.price,
-        symbolDigits,
-        GetContractSize(signal.ticker),
-        GetMarginPercent(signal.ticker) * 100
-    ));
-
-    return true;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate position size based on risk and stop loss                |
-//+------------------------------------------------------------------+
-double CalculatePositionSize(string symbol, double entryPrice, double stopLoss) {
-    // Calculate maximum risk amount based on account balance
-    double accountBalance = AccountBalance();
-    double maxRiskAmount = accountBalance * (RISK_PERCENT / 100);
-    double stopDistance = MathAbs(entryPrice - stopLoss);
-
-    if (stopDistance == 0) {
-        LogError("Error: Stop loss distance cannot be zero");
-        return 0;
-    }
-
-    bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
-                        StringFind(symbol, "ETH") >= 0 || 
-                        StringFind(symbol, "LTC") >= 0);
-    bool isJPYPair = (StringFind(symbol, "JPY") >= 0);
-    int digits = GetSymbolDigits(symbol);
-    double contractSize = GetContractSize(symbol);
-    double marginPercent = GetMarginPercent(symbol);
-
-    LogDebug(StringFormat(
-        "Position Size Calculation Starting:" +
-        "\nSymbol: %s" +
-        "\nContract Size: %.2f" +
-        "\nMargin Requirement: %.2f%%" +
-        "\nAccount Balance: $%.2f" +
-        "\nRisk Amount: $%.2f" +
-        "\nEntry Price: %.*f" +
-        "\nStop Loss: %.*f" +
-        "\nStop Distance: %.*f",
-        symbol, 
-        contractSize,
-        marginPercent * 100,
-        accountBalance, 
-        maxRiskAmount, 
-        digits, entryPrice,
-        digits, stopLoss,
-        digits, stopDistance
-    ), symbol);
-
-    double lotSize;
-
-    if (isCryptoPair) {
-        // Calculate true USD risk per lot considering contract size
-        double oneUnitValue = entryPrice * contractSize;
-        double riskPerLot = stopDistance * oneUnitValue;
-        
-        // Initial lot size based on risk
-        lotSize = maxRiskAmount / riskPerLot;
-        
-        // Calculate margin requirement per lot
-        double marginRequired = oneUnitValue * marginPercent;
-        
-        // Maximum position value based on available margin with safety buffer
-        double maxPositionValue = AccountFreeMargin() / (marginPercent * 1.5); // 150% margin reserve
-        double maxLotsBasedOnMargin = maxPositionValue / oneUnitValue;
-        
-        // Maximum position based on account equity (prevent over-leverage)
-        double maxEquityPercent = RISK_PERCENT * 2; // 2x risk percent for max position size
-        double maxPositionEquity = AccountEquity() * (maxEquityPercent / 100);
-        double maxLotsBasedOnEquity = maxPositionEquity / oneUnitValue;
-        
-        // Take the minimum of all constraints
-        lotSize = MathMin(lotSize, maxLotsBasedOnMargin);
-        lotSize = MathMin(lotSize, maxLotsBasedOnEquity);
-        
-        LogDebug(StringFormat(
-            "Crypto Position Size Calculation:" +
-            "\nOne Unit Value: $%.2f" +
-            "\nRisk Per Lot: $%.2f" +
-            "\nMargin Required Per Lot: $%.2f" +
-            "\nMax Lots (Margin): %.4f" +
-            "\nMax Lots (Equity): %.4f" +
-            "\nSelected Size: %.4f",
-            oneUnitValue,
-            riskPerLot,
-            marginRequired,
-            maxLotsBasedOnMargin,
-            maxLotsBasedOnEquity,
-            lotSize
-        ));
-    } else {
-        // Forex position sizing
-        double point = MarketInfo(symbol, MODE_POINT);
-        double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
-        double pipSize = isJPYPair ? 0.01 : 0.0001;
-        double pipValue = isJPYPair ? (tickValue * 100) : (tickValue * 10);
-        double stopPoints = stopDistance / point;
-        
-        // Calculate risk per standard lot
-        double riskPerLot = stopPoints * tickValue;
-        
-        // Initial lot size based on risk
-        lotSize = maxRiskAmount / riskPerLot;
-        
-        // Calculate margin requirement per lot
-        double marginRequired = contractSize * entryPrice * marginPercent;
-        double maxLotsBasedOnMargin = AccountFreeMargin() / (marginRequired * 1.5);
-        
-        // Maximum position based on account equity
-        double maxEquityPercent = RISK_PERCENT * 2;
-        double maxPositionEquity = AccountEquity() * (maxEquityPercent / 100);
-        double maxLotsBasedOnEquity = maxPositionEquity / (contractSize * entryPrice);
-        
-        // Apply all constraints
-        lotSize = MathMin(lotSize, maxLotsBasedOnMargin);
-        lotSize = MathMin(lotSize, maxLotsBasedOnEquity);
-        
-        LogDebug(StringFormat(
-            "Forex Position Size Calculation:" +
-            "\nStop Distance (points): %.1f" +
-            "\nPip Value: $%.5f" +
-            "\nRisk Per Lot: $%.2f" +
-            "\nMargin Required Per Lot: $%.2f" +
-            "\nMax Lots (Margin): %.2f" +
-            "\nMax Lots (Equity): %.2f" +
-            "\nSelected Size: %.2f",
-            stopPoints,
-            pipValue,
-            riskPerLot,
-            marginRequired,
-            maxLotsBasedOnMargin,
-            maxLotsBasedOnEquity,
-            lotSize
-        ));
-    }
-    
-    // Apply broker constraints
-    double minLot = MarketInfo(symbol, MODE_MINLOT);
-    double maxLot = MarketInfo(symbol, MODE_MAXLOT);
-    double lotStep = MarketInfo(symbol, MODE_LOTSTEP);
-    
-    // Round to lot step
-    lotSize = MathFloor(lotSize / lotStep) * lotStep;
-    
-    // Ensure within broker's limits
-    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
-    
-    // Calculate and validate final risk
-    double finalRisk = CalculateFinalPositionRisk(symbol, lotSize, entryPrice, stopLoss);
-    double finalRiskPercent = (finalRisk / accountBalance) * 100;
-    
-    LogDebug(StringFormat(
-        "Final Position Size:" +
-        "\nLot Size: %.4f" +
-        "\nActual Risk Amount: $%.2f" +
-        "\nRisk Percent: %.2f%%",
-        lotSize,
-        finalRisk,
-        finalRiskPercent
-    ));
-    
-    return lotSize;
-}
 
 // Helper function to calculate final position risk
 double CalculateFinalPositionRisk(string symbol, double lots, double entryPrice, double stopLoss) {
@@ -895,128 +1026,7 @@ double CalculateFinalPositionRisk(string symbol, double lots, double entryPrice,
         return (stopDistance / point) * tickValue * lots;
     }
 }
-//+------------------------------------------------------------------+
-//| Calculate Stop Loss price based on pair type                       |
-//+------------------------------------------------------------------+
-double CalculateStopLoss(string symbol, int cmd, double entryPrice) {
-    // Validate entry price
-    if (entryPrice <= 0) {
-        LogError(StringFormat("Invalid entry price for %s: %.5f", symbol, entryPrice));
-        return 0;
-    }
-    
-    // Get instrument specifications
-    int digits = GetSymbolDigits(symbol);
-    bool isCryptoPair = (StringFind(symbol, "BTC") >= 0 || 
-                        StringFind(symbol, "ETH") >= 0 || 
-                        StringFind(symbol, "LTC") >= 0);
-    bool isJPYPair = (StringFind(symbol, "JPY") >= 0);
-    double contractSize = GetContractSize(symbol);
-    double point = MarketInfo(symbol, MODE_POINT);
-    
-    double stopLoss = 0;
-    
-    // Calculate stop loss based on instrument type
-    if (isCryptoPair) {
-        // Percentage-based stop for crypto
-        double stopDistance = entryPrice * (CRYPTO_STOP_PERCENT / 100);
-        stopLoss = cmd == OP_BUY ? 
-                  NormalizeDouble(entryPrice - stopDistance, digits) :
-                  NormalizeDouble(entryPrice + stopDistance, digits);
-        
-        // Calculate monetary value of stop loss
-        double stopValue = stopDistance * contractSize;
-        
-        LogDebug(StringFormat(
-            "Crypto Stop Loss Calculation [%s]:" +
-            "\nDirection: %s" +
-            "\nEntry Price: %.*f" +
-            "\nStop Loss: %.*f" +
-            "\nStop Distance: %.*f" +
-            "\nStop Percent: %.2f%%" +
-            "\nContract Size: %.2f" +
-            "\nStop Value: $%.2f",
-            symbol,
-            cmd == OP_BUY ? "BUY" : "SELL",
-            digits, entryPrice,
-            digits, stopLoss,
-            digits, stopDistance,
-            CRYPTO_STOP_PERCENT,
-            contractSize,
-            stopValue
-        ));
-    } else {
-        // Pip-based stop for forex
-        double pipSize = isJPYPair ? 0.01 : 0.0001;
-        double pipValue = MarketInfo(symbol, MODE_TICKVALUE) * (isJPYPair ? 100 : 10);
-        double stopPips = FOREX_STOP_PIPS;
-        double stopDistance = stopPips * pipSize;
-        
-        stopLoss = cmd == OP_BUY ? 
-                  NormalizeDouble(entryPrice - stopDistance, digits) :
-                  NormalizeDouble(entryPrice + stopDistance, digits);
-                  
-        // Calculate monetary value of stop loss
-        double stopValue = FOREX_STOP_PIPS * pipValue * (contractSize / 100000.0);
-        
-        LogDebug(StringFormat(
-            "Forex Stop Loss Calculation [%s]:" +
-            "\nDirection: %s" +
-            "\nEntry Price: %.*f" +
-            "\nStop Loss: %.*f" +
-            "\nStop Distance: %.*f" +
-            "\nStop Pips: %.1f" +
-            "\nPip Value: $%.5f" +
-            "\nStop Value: $%.2f",
-            symbol,
-            cmd == OP_BUY ? "BUY" : "SELL",
-            digits, entryPrice,
-            digits, stopLoss,
-            digits, stopDistance,
-            stopPips,
-            pipValue,
-            stopValue
-        ));
-    }
-    
-    // Validation checks
-    if (cmd == OP_BUY && stopLoss >= entryPrice) {
-        LogError(StringFormat(
-            "Invalid buy stop loss - must be below entry price:" +
-            "\nEntry: %.*f" +
-            "\nStop: %.*f",
-            digits, entryPrice,
-            digits, stopLoss
-        ));
-        return 0;
-    }
-    
-    if (cmd == OP_SELL && stopLoss <= entryPrice) {
-        LogError(StringFormat(
-            "Invalid sell stop loss - must be above entry price:" +
-            "\nEntry: %.*f" +
-            "\nStop: %.*f",
-            digits, entryPrice,
-            digits, stopLoss
-        ));
-        return 0;
-    }
-    
-    // Check minimum stop distance
-    double minStop = MarketInfo(symbol, MODE_STOPLEVEL) * point;
-    if (MathAbs(entryPrice - stopLoss) < minStop) {
-        LogError(StringFormat(
-            "Stop loss too close to entry price:" +
-            "\nMinimum distance: %.*f" +
-            "\nActual distance: %.*f",
-            digits, minStop,
-            digits, MathAbs(entryPrice - stopLoss)
-        ));
-        return 0;
-    }
-    
-    return stopLoss;
-}
+
 
 //+------------------------------------------------------------------+
 //| Process trading signal                                            |
