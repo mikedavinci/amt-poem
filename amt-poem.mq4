@@ -7,6 +7,9 @@
 #property version "1.00"
 #property strict
 
+//+------------------------------------------------------------------+
+//| Constants & Definitions                                            |
+//+------------------------------------------------------------------+
 // Custom Error Codes (start at high number to avoid conflicts)
 #define ERR_CUSTOM_START 65536
 #define ERR_CUSTOM_ERROR (ERR_CUSTOM_START + 1)
@@ -30,6 +33,9 @@
 #define CRYPTO_CONTRACT_SIZE_LTC 100
 #define CRYPTO_MARGIN_PERCENT_LTC 0.01      // 1.0%
 
+//+------------------------------------------------------------------+
+//| Helper Functions                                                   |
+//+------------------------------------------------------------------+
 // Helper function to get contract size for any symbol
 double GetContractSize(string symbol) {
     if(StringFind(symbol, "LTC") >= 0) return CRYPTO_CONTRACT_SIZE_LTC;
@@ -53,13 +59,16 @@ int GetSymbolDigits(string symbol) {
     return FOREX_DIGITS;
 }
 
+//+------------------------------------------------------------------+
+//| Data Structures                                                    |
+//+------------------------------------------------------------------+
 // Signal Data Structure
 struct SignalData {
-  string ticker;     // Trading symbol
-  string action;     // BUY, SELL, or NEUTRAL
-  double price;      // Signal price
-  string timestamp;  // Signal timestamp
-  string pattern;    // Trading pattern that generated the signal
+    string ticker;     // Trading symbol
+    string action;     // BUY, SELL, or NEUTRAL
+    double price;      // Signal price
+    string timestamp;  // Signal timestamp
+    string pattern;    // Trading pattern that generated the signal
 };
 
 // Add to global variables section
