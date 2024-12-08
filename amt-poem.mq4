@@ -81,35 +81,49 @@ struct LastTradeInfo {
     double profitLoss;      // Final P/L including swap and commission
 };
 
-// Global variables
+//+------------------------------------------------------------------+
+//| Global Variables                                                   |
+//+------------------------------------------------------------------+
 datetime lastCheck = 0;
 string lastSignalTimestamp = "";
 LastTradeInfo lastClosedTrades[];
 
-// External parameters
+//+------------------------------------------------------------------+
+//| External Parameters                                                |
+//+------------------------------------------------------------------+
+// API Configuration
 extern string API_URL = "https://api.tradejourney.ai/api/alerts/mt4-forex-signals";  // API URL
-extern int REFRESH_MINUTES = 60;                                                      // How often to check for new signals
-extern bool DEBUG_MODE = true;                                                        // Print debug messages
 extern string PAPERTRAIL_HOST = "https://api.tradejourney.ai/api/alerts/log";        // API endpoint for logs
 extern string SYSTEM_NAME = "EA-TradeJourney";                                       // System identifier
+extern string TIMEFRAME = "60";                                                      // Timeframe parameter for API
+
+// Refresh Settings
+extern int REFRESH_MINUTES = 60;                                                      // How often to check for new signals
+extern bool DEBUG_MODE = true;                                                        // Print debug messages
 extern bool ENABLE_PAPERTRAIL = true;                                                // Enable/disable Papertrail logging
+
+// Risk Management
 extern bool ENABLE_PROFIT_PROTECTION = true;                                         // Enable/disable profit protection
-extern int PROFIT_CHECK_INTERVAL = 300;                                               // How often to check profit protection (in seconds)
+extern int PROFIT_CHECK_INTERVAL = 300;                                              // How often to check profit protection (in seconds)
 extern double FOREX_PROFIT_PIPS_THRESHOLD = 20;                                      // Minimum profit in pips before protection
 extern double FOREX_PROFIT_LOCK_PIPS = 10;                                          // How many pips to keep as profit
 extern double CRYPTO_PROFIT_THRESHOLD = 1.0;                                         // Minimum profit percentage before protection
 extern double CRYPTO_PROFIT_LOCK_PERCENT = 0.5;                                     // Percentage of profit to protect
+
+// Stop Loss Settings
 extern double FOREX_STOP_PIPS = 50;                                                 // Stop loss in pips for forex pairs
 extern double CRYPTO_STOP_PERCENT = 2.0;                                            // Stop loss percentage for crypto pairs
+extern double FOREX_EMERGENCY_PIPS = 75;                                           // Emergency close level for forex (in pips)
+extern int EMERGENCY_CLOSE_PERCENT = 3;                                            // Emergency close if loss exceeds this percentage
+
+// Position Management
 extern double RISK_PERCENT = 1.0;                                                   // Risk percentage per trade
 extern int MAX_POSITIONS = 1;                                                       // Maximum positions per symbol
 extern int MAX_RETRIES = 3;                                                        // Maximum retries for failed trades
-extern double FOREX_EMERGENCY_PIPS = 75;                                           // Emergency close level for forex (in pips)
-extern int EMERGENCY_CLOSE_PERCENT = 3;                                            // Emergency close if loss exceeds this percentage
 extern int MAX_SLIPPAGE = 5;                                                       // Maximum allowed slippage in points
-extern int PRICE_DIGITS = 5;                                                       // Decimal places for price display (5 for forex, 3 for JPY pairs)
-extern string TIMEFRAME = "60";                                                    // Timeframe parameter for API
+extern int PRICE_DIGITS = 5;                                                       // Decimal places for price display
 
+// Trading Sessions
 extern bool TRADE_ASIAN_SESSION = true;                                            // Allow trading during Asian session
 extern bool TRADE_LONDON_SESSION = true;                                          // Allow trading during London session
 extern bool TRADE_NEWYORK_SESSION = true;                                         // Allow trading during New York session
@@ -141,6 +155,71 @@ int OnInit() {
 void OnDeinit(const int reason) {
    LogInfo(StringFormat("EA Deinitialized. Reason: %d", reason));
 }
+
+//+------------------------------------------------------------------+
+//| Main tick function                                                |
+//+------------------------------------------------------------------+
+void OnTick() {
+    // Critical safety checks first
+    if (!IsTradeAllowed()) {
+        static datetime lastErrorLog = 0;
+        if (TimeCurrent() - lastErrorLog >= 300) {  // Log every 5 minutes
+            LogError("Trading not allowed - check settings");
+            lastErrorLog = TimeCurrent();
+        }
+        return;
+    }
+
+    // Initialize tracking variables for multiple symbols
+    struct SymbolState {
+        bool needsCheck;
+        bool isActive;
+        double lastBid;
+        double lastAsk;
+        datetime lastUpdate;
+    };
+    static SymbolState symbolStates[];
+    
+    // Ensure we have states for all monitored symbols
+    string symbols[] = {"EURUSD+", "AUDUSD+", "GBPUSD+", "BTCUSD", "ETHUSD", "LTCUSD"};
+    if (ArraySize(symbolStates) == 0) {
+        ArrayResize(symbolStates, ArraySize(symbols));
+        for (int i = 0; i < ArraySize(symbols); i++) {
+            symbolStates[i].needsCheck = true;
+            symbolStates[i].isActive = true;
+            symbolStates[i].lastBid = 0;
+            symbolStates[i].lastAsk = 0;
+            symbolStates[i].lastUpdate = 0;
+        }
+    }
+
+    // Emergency close check - highest priority but rate limited
+    static datetime lastEmergencyCheck = 0;
+    if (TimeCurrent() - lastEmergencyCheck >= 60) {  // Check every minute
+        CheckEmergencyClose();
+        lastEmergencyCheck = TimeCurrent();
+    }
+
+    // Periodic monitoring checks
+    PerformPeriodicChecks();
+
+    // Signal processing checks
+    if (!IsTimeToCheck()) return;
+
+    // Process monitored symbols
+    ProcessMonitoredSymbols(symbols, symbolStates);
+
+    // Update last check time
+    lastCheck = TimeCurrent();
+
+    // Profit protection check - rate limited
+    static datetime lastProfitCheck = 0;
+    if (ENABLE_PROFIT_PROTECTION && TimeCurrent() - lastProfitCheck >= PROFIT_CHECK_INTERVAL) {
+        CheckProfitProtection();
+        lastProfitCheck = TimeCurrent();
+    }
+}
+
 
 //+------------------------------------------------------------------+
 //| Helper function to escape JSON strings                             |
@@ -472,69 +551,7 @@ void PerformPeriodicChecks() {
     }
 }
 
-//+------------------------------------------------------------------+
-//| Main tick function                                                |
-//+------------------------------------------------------------------+
-void OnTick() {
-    // Critical safety checks first
-    if (!IsTradeAllowed()) {
-        static datetime lastErrorLog = 0;
-        if (TimeCurrent() - lastErrorLog >= 300) {  // Log every 5 minutes
-            LogError("Trading not allowed - check settings");
-            lastErrorLog = TimeCurrent();
-        }
-        return;
-    }
 
-    // Initialize tracking variables for multiple symbols
-    struct SymbolState {
-        bool needsCheck;
-        bool isActive;
-        double lastBid;
-        double lastAsk;
-        datetime lastUpdate;
-    };
-    static SymbolState symbolStates[];
-    
-    // Ensure we have states for all monitored symbols
-    string symbols[] = {"EURUSD+", "AUDUSD+", "GBPUSD+", "BTCUSD", "ETHUSD", "LTCUSD"};
-    if (ArraySize(symbolStates) == 0) {
-        ArrayResize(symbolStates, ArraySize(symbols));
-        for (int i = 0; i < ArraySize(symbols); i++) {
-            symbolStates[i].needsCheck = true;
-            symbolStates[i].isActive = true;
-            symbolStates[i].lastBid = 0;
-            symbolStates[i].lastAsk = 0;
-            symbolStates[i].lastUpdate = 0;
-        }
-    }
-
-    // Emergency close check - highest priority but rate limited
-    static datetime lastEmergencyCheck = 0;
-    if (TimeCurrent() - lastEmergencyCheck >= 60) {  // Check every minute
-        CheckEmergencyClose();
-        lastEmergencyCheck = TimeCurrent();
-    }
-
-    // Periodic monitoring checks
-    PerformPeriodicChecks();
-
-    // Signal processing checks
-    if (!IsTimeToCheck()) return;
-
-    // Process monitored symbols
-    ProcessMonitoredSymbols(symbols, symbolStates);
-
-    // Update last check time
-    lastCheck = TimeCurrent();
-
-    // Profit protection check - rate limited
-    static datetime lastProfitCheck = 0;
-    if (ENABLE_PROFIT_PROTECTION && TimeCurrent() - lastProfitCheck >= PROFIT_CHECK_INTERVAL) {
-        CheckProfitProtection();
-        lastProfitCheck = TimeCurrent();
-    }
-}
 
 //+------------------------------------------------------------------+
 //| Check if it's time to refresh signals                             |
