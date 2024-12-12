@@ -9,13 +9,13 @@
 #property strict
 
 // Include all modules
-#include "Includes/Constants.mqh"
-#include "Includes/Structures.mqh"
-#include "Includes/SymbolInfo.mqh"
-#include "Includes/TradeManager.mqh"
-#include "Includes/RiskManager.mqh"
-#include "Includes/SessionManager.mqh"
-#include "Includes/Logger.mqh"
+#include "includes/Constants.mqh"
+#include "includes/Structures.mqh"
+#include "includes/SymbolInfo.mqh"
+#include "includes/TradeManager.mqh"
+#include "includes/RiskManager.mqh"
+#include "includes/SessionManager.mqh"
+#include "includes/Logger.mqh"
 
 // External Parameters
 // API Configuration
