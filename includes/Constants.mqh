@@ -33,6 +33,7 @@
 #define MAX_RETRY_ATTEMPTS          3
 #define DEFAULT_SLIPPAGE           5
 #define EMERGENCY_CLOSE_PERCENT    3
+#define CRYPTO_EMERGENCY_STOP_PERCENT 3.0
 
 // Stop Loss Settings
 #define FOREX_STOP_PIPS           50

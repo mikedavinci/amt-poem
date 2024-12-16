@@ -188,35 +188,41 @@ public:
         }
 
      void CheckTrailingStop() {
-            if(!HasOpenPosition()) return;
+         if(!HasOpenPosition()) return;
 
-            for(int i = OrdersTotal() - 1; i >= 0; i--) {
-                if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                        double currentPrice = OrderType() == OP_BUY ?
-                            m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+         for(int i = OrdersTotal() - 1; i >= 0; i--) {
+             if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                 if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                     double currentPrice = OrderType() == OP_BUY ?
+                         m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
 
-                        // Calculate trailing stop distance based on instrument type
-                        double trailingDistance = m_symbolInfo.IsCryptoPair() ?
-                            currentPrice * (CRYPTO_STOP_PERCENT / 100.0) :
-                            FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
+                     // Calculate stop distance based on instrument type
+                     double stopDistance;
+                     if(m_symbolInfo.IsCryptoPair()) {
+                         // Use normal stop for trailing, emergency stop for sudden moves
+                         double normalStop = currentPrice * (CRYPTO_STOP_PERCENT / 100.0);
+                         double emergencyStop = currentPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+                         stopDistance = MathMin(normalStop, emergencyStop);  // Use the tighter of the two
+                     } else {
+                         stopDistance = FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
+                     }
 
-                        double newStopLoss = OrderType() == OP_BUY ?
-                            currentPrice - trailingDistance :
-                            currentPrice + trailingDistance;
+                     double newStopLoss = OrderType() == OP_BUY ?
+                         currentPrice - stopDistance :
+                         currentPrice + stopDistance;
 
-                        // Move stop loss if price has moved enough
-                        if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
-                            ModifyPosition(OrderTicket(), newStopLoss);
-                        }
-                        else if(OrderType() == OP_SELL &&
-                                (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
-                            ModifyPosition(OrderTicket(), newStopLoss);
-                        }
-                    }
-                }
-            }
-        }
+                     // Move stop loss if price has moved enough
+                     if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
+                         ModifyPosition(OrderTicket(), newStopLoss);
+                     }
+                     else if(OrderType() == OP_SELL &&
+                             (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
+                         ModifyPosition(OrderTicket(), newStopLoss);
+                     }
+                 }
+             }
+         }
+     }
     
     bool ModifyPosition(int ticket, double sl, double tp = 0) {
         if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
