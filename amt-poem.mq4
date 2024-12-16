@@ -173,11 +173,36 @@ void OnTick() {
     
     // Perform periodic checks
     PerformPeriodicChecks();
+
+    // Check trailing stops
+        if(ENABLE_PROFIT_PROTECTION) {
+            static datetime lastTrailingCheck = 0;
+            if(TimeCurrent() - lastTrailingCheck >= 60) {  // Check every minute
+                g_tradeManager.CheckTrailingStop();
+                lastTrailingCheck = TimeCurrent();
+            }
+        }
     
     // Check for new signals
     if(IsTimeToCheck()) {
         ProcessSignals();
     }
+
+    void ProcessSignals() {
+            string response = FetchSignals();
+            if(response == "") return;
+
+            SignalData signal;
+            if(ParseSignal(response, signal)) {
+                if(ValidateSignal(signal)) {
+                    // Set instrument type based on symbol
+                    signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
+                        INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
+
+                    ExecuteSignal(signal);
+                }
+            }
+        }
     
     // Monitor open positions
     if(ENABLE_PROFIT_PROTECTION) {
@@ -262,6 +287,8 @@ void CloseAllPositions(string reason) {
     }
 }
 
+
+
 //+------------------------------------------------------------------+
 //| Position monitoring                                               |
 //+------------------------------------------------------------------+
@@ -313,34 +340,43 @@ void ExecuteSignal(const SignalData& signal) {
         signal.signal == SIGNAL_BUY ? OP_BUY : OP_SELL,
         signal.price
     );
-    
+
+    // Use appropriate risk percentage from Constants
+    double riskPercent = g_symbolInfo.IsCryptoPair() ?
+        CRYPTO_STOP_PERCENT : DEFAULT_RISK_PERCENT;
+    g_riskManager.SetRiskPercent(riskPercent);
+
     double lots = g_riskManager.CalculatePositionSize(signal.price, stopLoss);
-    
+
     if(lots <= 0) {
         Logger.Error("Invalid position size calculated");
         return;
     }
-    
-    // Execute trade
+
+    // Execute trade with reversed position handling
     bool success = false;
     if(signal.signal == SIGNAL_BUY) {
         success = g_tradeManager.OpenBuyPosition(lots, stopLoss, 0, signal.pattern);
     } else if(signal.signal == SIGNAL_SELL) {
         success = g_tradeManager.OpenSellPosition(lots, stopLoss, 0, signal.pattern);
     }
-    
+
     if(success) {
         g_lastSignalTimestamp = signal.timestamp;
         Logger.Trade(StringFormat(
-            "Position opened:" +
+            "Position transition executed:" +
             "\nDirection: %s" +
             "\nLots: %.2f" +
             "\nEntry: %.5f" +
-            "\nStop Loss: %.5f",
+            "\nStop Loss: %.5f" +
+            "\nPattern: %s",
             signal.signal == SIGNAL_BUY ? "BUY" : "SELL",
             lots,
             signal.price,
-            stopLoss
+            stopLoss,
+            signal.pattern
         ));
+    } else {
+        Logger.Error("Failed to execute position transition");
     }
 }

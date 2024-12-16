@@ -22,6 +22,26 @@ private:
     int             m_slippage;         // Maximum allowed slippage
     int             m_maxRetries;       // Maximum retry attempts
     bool            m_isTradeAllowed;   // Trade permission flag
+    bool            m_awaitingOppositeSignal;  // New flag for signal management
+    ENUM_TRADE_SIGNAL m_lastClosedDirection;   // Track last closed position direction
+
+    // New method to check if we can open position after stop loss/trailing stop
+    bool CanOpenNewPosition(ENUM_TRADE_SIGNAL newSignal) {
+        if(!m_awaitingOppositeSignal) return true;
+
+        // If awaiting opposite signal, only allow if signal is opposite to last closed position
+        if(m_lastClosedDirection == SIGNAL_BUY && newSignal == SIGNAL_SELL) {
+            m_awaitingOppositeSignal = false;
+            return true;
+        }
+        if(m_lastClosedDirection == SIGNAL_SELL && newSignal == SIGNAL_BUY) {
+            m_awaitingOppositeSignal = false;
+            return true;
+        }
+
+        Logger.Warning("Awaiting opposite signal before opening new position");
+        return false;
+    }
     
     // Private methods for trade operations
     bool ExecuteMarketOrder(int type, double lots, double price, double sl, 
@@ -98,6 +118,7 @@ public:
     // Trade execution methods
     bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
             if(!CanTrade()) return false;
+            if(!CanOpenNewPosition(SIGNAL_BUY)) return false;
 
             // Close any existing sell positions first
             if(HasOpenPosition()) {
@@ -118,6 +139,7 @@ public:
     
     bool OpenSellPosition(double lots, double sl, double tp = 0, string comment = "") {
             if(!CanTrade()) return false;
+            if(!CanOpenNewPosition(SIGNAL_SELL)) return false;
 
             // Close any existing buy positions first
             if(HasOpenPosition()) {
@@ -137,26 +159,64 @@ public:
         }
     
     bool ClosePosition(int ticket, string reason = "") {
-        if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
-            LogTradeError("Order select failed", GetLastError());
-            return false;
+            if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
+                LogTradeError("Order select failed", GetLastError());
+                return false;
+            }
+
+            double lots = OrderLots();
+            double price = OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+            bool success = OrderClose(ticket, lots, price, m_slippage, clrRed);
+            if(success) {
+                m_lastTrade.closePrice = price;
+                m_lastTrade.closeTime = TimeCurrent();
+                m_lastTrade.closeReason = StringToCloseReason(reason);
+                m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
+
+                // Set awaiting flag if closed by stop loss or trailing stop
+                if(reason == "SL" || StringFind(reason, "trailing") >= 0) {
+                    m_awaitingOppositeSignal = true;
+                    m_lastClosedDirection = OrderType() == OP_BUY ? SIGNAL_BUY : SIGNAL_SELL;
+                    Logger.Info("Position closed by stop/trailing stop - awaiting opposite signal");
+                }
+            } else {
+                LogTradeError("Order close failed", GetLastError());
+            }
+
+            return success;
         }
-        
-        double lots = OrderLots();
-        double price = OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
-        
-        bool success = OrderClose(ticket, lots, price, m_slippage, clrRed);
-        if(success) {
-            m_lastTrade.closePrice = price;
-            m_lastTrade.closeTime = TimeCurrent();
-            m_lastTrade.closeReason = StringToCloseReason(reason);
-            m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
-        } else {
-            LogTradeError("Order close failed", GetLastError());
+
+     void CheckTrailingStop() {
+            if(!HasOpenPosition()) return;
+
+            for(int i = OrdersTotal() - 1; i >= 0; i--) {
+                if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                        double currentPrice = OrderType() == OP_BUY ?
+                            m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+                        // Calculate trailing stop distance based on instrument type
+                        double trailingDistance = m_symbolInfo.IsCryptoPair() ?
+                            currentPrice * (CRYPTO_STOP_PERCENT / 100.0) :
+                            FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
+
+                        double newStopLoss = OrderType() == OP_BUY ?
+                            currentPrice - trailingDistance :
+                            currentPrice + trailingDistance;
+
+                        // Move stop loss if price has moved enough
+                        if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
+                            ModifyPosition(OrderTicket(), newStopLoss);
+                        }
+                        else if(OrderType() == OP_SELL &&
+                                (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
+                            ModifyPosition(OrderTicket(), newStopLoss);
+                        }
+                    }
+                }
+            }
         }
-        
-        return success;
-    }
     
     bool ModifyPosition(int ticket, double sl, double tp = 0) {
         if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
@@ -227,25 +287,56 @@ private:
     }
 
     bool CloseExistingPositions(ENUM_TRADE_SIGNAL newSignal) {
-            bool allClosed = true;
-            int total = OrdersTotal();
+        bool allClosed = true;
+        int total = OrdersTotal();
+        int closedCount = 0;
 
-            for(int i = total - 1; i >= 0; i--) {
-                if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                        ENUM_TRADE_SIGNAL currentPos =
-                            (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+        Logger.Info(StringFormat("Closing existing positions for new %s signal",
+                    newSignal == SIGNAL_BUY ? "BUY" : "SELL"));
 
-                        // Close if signals are opposite
-                        if(currentPos != newSignal) {
-                            if(!ClosePosition(OrderTicket(), "Signal reversal")) {
-                                allClosed = false;
-                                Logger.Error("Failed to close position for reversal");
-                            }
+        for(int i = total - 1; i >= 0; i--) {
+            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    ENUM_TRADE_SIGNAL currentPos =
+                        (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+
+                    // Close if signals are opposite
+                    if(currentPos != newSignal) {
+                        double closePrice = OrderType() == OP_BUY ?
+                            m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+                        Logger.Trade(StringFormat(
+                            "Closing position for signal reversal:" +
+                            "\nTicket: %d" +
+                            "\nType: %s" +
+                            "\nLots: %.2f" +
+                            "\nOpen Price: %.5f" +
+                            "\nClose Price: %.5f" +
+                            "\nProfit: %.2f",
+                            OrderTicket(),
+                            OrderType() == OP_BUY ? "BUY" : "SELL",
+                            OrderLots(),
+                            OrderOpenPrice(),
+                            closePrice,
+                            OrderProfit()
+                        ));
+
+                        if(!ClosePosition(OrderTicket(), "Signal reversal")) {
+                            allClosed = false;
+                            Logger.Error(StringFormat("Failed to close position %d for reversal",
+                                OrderTicket()));
+                        } else {
+                            closedCount++;
                         }
                     }
                 }
             }
-            return allClosed;
         }
+
+        if(closedCount > 0) {
+            Logger.Info(StringFormat("Closed %d positions for signal reversal", closedCount));
+        }
+
+        return allClosed;
+    }
 };

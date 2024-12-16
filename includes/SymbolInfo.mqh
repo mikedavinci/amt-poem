@@ -39,29 +39,28 @@ private:
     
     // Determine symbol type and characteristics
     void DetermineSymbolType() {
-        if(StringFind(m_symbol, "BTC") >= 0 || 
-           StringFind(m_symbol, "ETH") >= 0 || 
-           StringFind(m_symbol, "LTC") >= 0) {
+        // Check for specific crypto pairs
+        if(StringFind(m_symbol, "BTC") >= 0) {
             m_symbolType = SYMBOL_TYPE_CRYPTO;
-        } else {
-            m_symbolType = SYMBOL_TYPE_FOREX;
+            m_digits = CRYPTO_DIGITS_BTC;
         }
-        
-        m_isJPYPair = (StringFind(m_symbol, "JPY") >= 0);
+        else if(StringFind(m_symbol, "ETH") >= 0) {
+            m_symbolType = SYMBOL_TYPE_CRYPTO;
+            m_digits = CRYPTO_DIGITS_ETH;
+        }
+        else if(StringFind(m_symbol, "LTC") >= 0) {
+            m_symbolType = SYMBOL_TYPE_CRYPTO;
+            m_digits = CRYPTO_DIGITS_LTC;
+        }
+        else {
+            m_symbolType = SYMBOL_TYPE_FOREX;
+            m_digits = FOREX_DIGITS;
+        }
     }
     
     // Set symbol-specific properties
     void SetSymbolProperties() {
-        // Set digits
-        if(m_symbolType == SYMBOL_TYPE_CRYPTO) {
-            m_digits = CRYPTO_DIGITS;
-        } else if(m_isJPYPair) {
-            m_digits = 3;
-        } else {
-            m_digits = FOREX_DIGITS;
-        }
-        
-        // Set contract size
+        // Set contract size and margin based on symbol type
         if(m_symbolType == SYMBOL_TYPE_CRYPTO) {
             if(StringFind(m_symbol, "LTC") >= 0) {
                 m_contractSize = CRYPTO_CONTRACT_SIZE_LTC;
@@ -74,9 +73,6 @@ private:
             m_contractSize = FOREX_CONTRACT_SIZE;
             m_marginPercent = FOREX_MARGIN_PERCENT;
         }
-        
-        // Set pip size
-        m_pipSize = m_isJPYPair ? 0.01 : 0.0001;
     }
 
 public:
