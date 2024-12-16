@@ -42,6 +42,33 @@ private:
         Logger.Warning("Awaiting opposite signal before opening new position");
         return false;
     }
+
+    bool ValidateEntryPrice(double signalPrice, double currentPrice, int type) {
+            if(signalPrice <= 0 || currentPrice <= 0) return false;
+
+            double deviation = MathAbs(1 - (currentPrice / signalPrice)) * 100;
+
+            // If price has moved too far from signal price, reject entry
+            if(deviation > ENTRY_PRICE_TOLERANCE_PERCENT) {
+                Logger.Warning(StringFormat(
+                    "Entry price deviation too high: %.2f%%. Signal: %.5f, Current: %.5f",
+                    deviation, signalPrice, currentPrice));
+                return false;
+            }
+
+            // For buy orders, current price should not be significantly higher than signal
+            // For sell orders, current price should not be significantly lower than signal
+            if(type == OP_BUY && currentPrice > signalPrice * (1 + ENTRY_PRICE_TOLERANCE_PERCENT/100.0)) {
+                Logger.Warning("Buy price too high compared to signal price");
+                return false;
+            }
+            if(type == OP_SELL && currentPrice < signalPrice * (1 - ENTRY_PRICE_TOLERANCE_PERCENT/100.0)) {
+                Logger.Warning("Sell price too low compared to signal price");
+                return false;
+            }
+
+            return true;
+        }
     
     // Private methods for trade operations
     bool ExecuteMarketOrder(int type, double lots, double price, double sl, 
@@ -49,13 +76,16 @@ private:
         int ticket = -1;
         int attempts = 0;
         bool success = false;
-        
+
         while(attempts < m_maxRetries && !success) {
-            if(attempts > 0) {
-                RefreshRates();
-                Sleep(1000 * attempts); // Exponential backoff
+            double currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
+
+            // Validate entry price against signal price
+            if(!ValidateEntryPrice(signalPrice, currentPrice, type)) {
+                Logger.Error("Price moved too far from signal price");
+                return false;
             }
-            
+
             price = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
             
             ticket = OrderSend(
@@ -187,42 +217,101 @@ public:
             return success;
         }
 
+    private:
+        bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
+            if(m_symbolInfo.IsCryptoPair()) {
+                double emergencyDistance = openPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+                if(orderType == OP_BUY && (currentPrice < openPrice - emergencyDistance)) {
+                    return true;
+                }
+                if(orderType == OP_SELL && (currentPrice > openPrice + emergencyDistance)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+    private:
+        bool CheckBreakevenCondition(double currentPrice, double openPrice,
+                                   double currentStop, int orderType) {
+            // Don't move to breakeven if we're already there or beyond
+            if(orderType == OP_BUY && currentStop >= openPrice) return false;
+            if(orderType == OP_SELL && currentStop <= openPrice) return false;
+
+            if(m_symbolInfo.IsCryptoPair()) {
+                // For crypto, calculate based on percentage
+                double profitPercent = MathAbs(currentPrice - openPrice) / openPrice * 100;
+                return profitPercent >= CRYPTO_BREAKEVEN_PROFIT_PERCENT;
+            } else {
+                // For forex, calculate based on pips
+                double profitInPips = orderType == OP_BUY ?
+                    (currentPrice - openPrice) / m_symbolInfo.GetPipSize() :
+                    (openPrice - currentPrice) / m_symbolInfo.GetPipSize();
+
+                return profitInPips >= FOREX_BREAKEVEN_PROFIT_PIPS;
+            }
+        }
+
      void CheckTrailingStop() {
-         if(!HasOpenPosition()) return;
+             if(!HasOpenPosition()) return;
 
-         for(int i = OrdersTotal() - 1; i >= 0; i--) {
-             if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                 if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                     double currentPrice = OrderType() == OP_BUY ?
-                         m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+             for(int i = OrdersTotal() - 1; i >= 0; i--) {
+                 if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                     if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                         double currentPrice = OrderType() == OP_BUY ?
+                             m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
 
-                     // Calculate stop distance based on instrument type
-                     double stopDistance;
-                     if(m_symbolInfo.IsCryptoPair()) {
-                         // Use normal stop for trailing, emergency stop for sudden moves
-                         double normalStop = currentPrice * (CRYPTO_STOP_PERCENT / 100.0);
-                         double emergencyStop = currentPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
-                         stopDistance = MathMin(normalStop, emergencyStop);  // Use the tighter of the two
-                     } else {
-                         stopDistance = FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
-                     }
+                         // First check emergency stop
+                         if(CheckEmergencyStop(currentPrice, OrderOpenPrice(), OrderType())) {
+                             ClosePosition(OrderTicket(), "EMERGENCY");
+                             continue;
+                         }
 
-                     double newStopLoss = OrderType() == OP_BUY ?
-                         currentPrice - stopDistance :
-                         currentPrice + stopDistance;
+                         // Check breakeven condition
+                         if(CheckBreakevenCondition(currentPrice, OrderOpenPrice(),
+                            OrderStopLoss(), OrderType())) {
 
-                     // Move stop loss if price has moved enough
-                     if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
-                         ModifyPosition(OrderTicket(), newStopLoss);
-                     }
-                     else if(OrderType() == OP_SELL &&
-                             (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
-                         ModifyPosition(OrderTicket(), newStopLoss);
+                             double breakevenStop = OrderOpenPrice();
+                             if(m_symbolInfo.IsCryptoPair()) {
+                                 // Add buffer for crypto based on percentage
+                                 if(OrderType() == OP_BUY) {
+                                     breakevenStop *= (1 + CRYPTO_BREAKEVEN_BUFFER_PERCENT/100.0);
+                                 } else {
+                                     breakevenStop *= (1 - CRYPTO_BREAKEVEN_BUFFER_PERCENT/100.0);
+                                 }
+                             } else {
+                                 // Add buffer for forex based on pips
+                                 if(OrderType() == OP_BUY) {
+                                     breakevenStop += m_symbolInfo.GetPipSize() * FOREX_BREAKEVEN_BUFFER_PIPS;
+                                 } else {
+                                     breakevenStop -= m_symbolInfo.GetPipSize() * FOREX_BREAKEVEN_BUFFER_PIPS;
+                                 }
+                             }
+
+                             ModifyPosition(OrderTicket(), breakevenStop);
+                             continue;  // Skip trailing stop if we moved to breakeven
+                         }
+
+                         // Normal trailing stop logic
+                         double stopDistance = m_symbolInfo.IsCryptoPair() ?
+                             currentPrice * (CRYPTO_STOP_PERCENT / 100.0) :
+                             FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
+
+                         double newStopLoss = OrderType() == OP_BUY ?
+                             currentPrice - stopDistance :
+                             currentPrice + stopDistance;
+
+                         if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
+                             ModifyPosition(OrderTicket(), newStopLoss);
+                         }
+                         else if(OrderType() == OP_SELL &&
+                                 (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
+                             ModifyPosition(OrderTicket(), newStopLoss);
+                         }
                      }
                  }
              }
          }
-     }
     
     bool ModifyPosition(int ticket, double sl, double tp = 0) {
         if(!OrderSelect(ticket, SELECT_BY_TICKET)) {

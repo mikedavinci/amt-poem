@@ -12,6 +12,9 @@
 #define ERR_CUSTOM_ERROR             (ERR_CUSTOM_START + 1)
 #define ERR_CUSTOM_CRITICAL          (ERR_CUSTOM_START + 2)
 
+// Tolerance
+#define ENTRY_PRICE_TOLERANCE_PERCENT 0.1  // 0.1% tolerance for entry price
+
 // Forex Constants
 #define FOREX_CONTRACT_SIZE          100000
 #define FOREX_MARGIN_PERCENT         100.0
@@ -58,3 +61,14 @@
 // API Settings
 #define API_TIMEOUT             5000
 #define API_RETRY_INTERVAL      1000
+
+#define INITIAL_RETRY_DELAY 100    // 100ms initial delay
+#define MAX_RETRY_DELAY    1000    // 1 second maximum delay
+
+// Breakeven settings for Forex
+#define FOREX_BREAKEVEN_PROFIT_PIPS   20    // Pips of profit before breakeven
+#define FOREX_BREAKEVEN_BUFFER_PIPS   2     // Buffer pips above entry price
+
+// Breakeven settings for Crypto
+#define CRYPTO_BREAKEVEN_PROFIT_PERCENT 1.0  // Percentage of profit before breakeven (1%)
+#define CRYPTO_BREAKEVEN_BUFFER_PERCENT 0.1  // Buffer percentage above entry price (0.1%)
