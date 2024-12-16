@@ -38,7 +38,7 @@
 #define FOREX_EMERGENCY_PIPS      75
 
 // Profit Protection Settings
-#define PROFIT_CHECK_INTERVAL     300
+#define PROFIT_CHECK_INTERVAL     300 // 5 minutes
 #define FOREX_PROFIT_PIPS_THRESHOLD 20
 #define FOREX_PROFIT_LOCK_PIPS     10
 #define CRYPTO_PROFIT_THRESHOLD    1.0

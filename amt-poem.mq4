@@ -239,7 +239,25 @@ void ProcessSignals() {
     SignalData signal;
     if(ParseSignal(response, signal)) {
         if(ValidateSignal(signal)) {
+            // Check for existing positions with opposite direction
+            if(g_tradeManager.HasOpenPosition()) {
+                PositionMetrics metrics = g_tradeManager.GetPositionMetrics();
+                if(metrics.totalPositions > 0) {
+                    // Close existing positions before opening new one
+                    CloseAllPositions("Signal reversal");
+                }
+            }
             ExecuteSignal(signal);
+        }
+    }
+}
+
+void CloseAllPositions(string reason) {
+    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == Symbol()) {
+                g_tradeManager.ClosePosition(OrderTicket(), reason);
+            }
         }
     }
 }

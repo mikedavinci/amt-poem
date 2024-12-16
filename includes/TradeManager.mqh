@@ -97,28 +97,44 @@ public:
     
     // Trade execution methods
     bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
-        if(!CanTrade()) return false;
-        
-        double price = m_symbolInfo.GetAsk();
-        if(!m_symbolInfo.ValidateStopLoss(OP_BUY, price, sl)) {
-            Logger.Error("Invalid stop loss for buy order");
-            return false;
+            if(!CanTrade()) return false;
+
+            // Close any existing sell positions first
+            if(HasOpenPosition()) {
+                if(!CloseExistingPositions(SIGNAL_BUY)) {
+                    Logger.Error("Failed to close existing positions before buy");
+                    return false;
+                }
+            }
+
+            double price = m_symbolInfo.GetAsk();
+            if(!m_symbolInfo.ValidateStopLoss(OP_BUY, price, sl)) {
+                Logger.Error("Invalid stop loss for buy order");
+                return false;
+            }
+
+            return ExecuteMarketOrder(OP_BUY, lots, price, sl, tp, comment);
         }
-        
-        return ExecuteMarketOrder(OP_BUY, lots, price, sl, tp, comment);
-    }
     
     bool OpenSellPosition(double lots, double sl, double tp = 0, string comment = "") {
-        if(!CanTrade()) return false;
-        
-        double price = m_symbolInfo.GetBid();
-        if(!m_symbolInfo.ValidateStopLoss(OP_SELL, price, sl)) {
-            Logger.Error("Invalid stop loss for sell order");
-            return false;
+            if(!CanTrade()) return false;
+
+            // Close any existing buy positions first
+            if(HasOpenPosition()) {
+                if(!CloseExistingPositions(SIGNAL_SELL)) {
+                    Logger.Error("Failed to close existing positions before sell");
+                    return false;
+                }
+            }
+
+            double price = m_symbolInfo.GetBid();
+            if(!m_symbolInfo.ValidateStopLoss(OP_SELL, price, sl)) {
+                Logger.Error("Invalid stop loss for sell order");
+                return false;
+            }
+
+            return ExecuteMarketOrder(OP_SELL, lots, price, sl, tp, comment);
         }
-        
-        return ExecuteMarketOrder(OP_SELL, lots, price, sl, tp, comment);
-    }
     
     bool ClosePosition(int ticket, string reason = "") {
         if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
@@ -209,4 +225,27 @@ private:
         if(reason == "PROFIT_PROTECTION") return CLOSE_PROFIT_PROTECTION;
         return CLOSE_MANUAL;
     }
+
+    bool CloseExistingPositions(ENUM_TRADE_SIGNAL newSignal) {
+            bool allClosed = true;
+            int total = OrdersTotal();
+
+            for(int i = total - 1; i >= 0; i--) {
+                if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                        ENUM_TRADE_SIGNAL currentPos =
+                            (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+
+                        // Close if signals are opposite
+                        if(currentPos != newSignal) {
+                            if(!ClosePosition(OrderTicket(), "Signal reversal")) {
+                                allClosed = false;
+                                Logger.Error("Failed to close position for reversal");
+                            }
+                        }
+                    }
+                }
+            }
+            return allClosed;
+        }
 };

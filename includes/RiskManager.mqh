@@ -189,4 +189,49 @@ public:
     
     double GetMarginBuffer() const { return m_marginBuffer; }
     void SetMarginBuffer(double value) { m_marginBuffer = value; }
+
+
+    void ExecuteSignal(const SignalData& signal) {
+        // Calculate position size and stop loss
+        double stopLoss = g_symbolInfo.CalculateStopLoss(
+            signal.signal == SIGNAL_BUY ? OP_BUY : OP_SELL,
+            signal.price
+        );
+
+        // Use appropriate risk percentage from Constants
+        double riskPercent = g_symbolInfo.IsCryptoPair() ?
+            (CRYPTO_STOP_PERCENT) : (DEFAULT_RISK_PERCENT);
+        g_riskManager.SetRiskPercent(riskPercent);
+
+        double lots = g_riskManager.CalculatePositionSize(signal.price, stopLoss);
+
+        if(lots <= 0) {
+            Logger.Error("Invalid position size calculated");
+            return;
+        }
+
+        // Execute trade with reversed position handling
+        bool success = false;
+        if(signal.signal == SIGNAL_BUY) {
+            success = g_tradeManager.OpenBuyPosition(lots, stopLoss, 0, signal.pattern);
+        } else if(signal.signal == SIGNAL_SELL) {
+            success = g_tradeManager.OpenSellPosition(lots, stopLoss, 0, signal.pattern);
+        }
+
+        if(success) {
+            g_lastSignalTimestamp = signal.timestamp;
+            Logger.Trade(StringFormat(
+                "Position transition executed:" +
+                "\nDirection: %s" +
+                "\nLots: %.2f" +
+                "\nEntry: %.5f" +
+                "\nStop Loss: %.5f",
+                signal.signal == SIGNAL_BUY ? "BUY" : "SELL",
+                lots,
+                signal.price,
+                stopLoss
+            ));
+        } else {
+            Logger.Error("Failed to execute position transition");
+        }
 };
