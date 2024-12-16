@@ -18,8 +18,10 @@
 #define FOREX_DIGITS                 5
 #define FOREX_MARGIN_INITIAL         100000
 
-// Crypto Constants
-#define CRYPTO_DIGITS               2
+// Crypto Constants - Only for BTC, ETH, LTC
+#define CRYPTO_DIGITS_BTC           5
+#define CRYPTO_DIGITS_ETH           5
+#define CRYPTO_DIGITS_LTC           5
 #define CRYPTO_CONTRACT_SIZE_DEFAULT 1
 #define CRYPTO_MARGIN_PERCENT_DEFAULT 0.003  // 0.3%
 #define CRYPTO_CONTRACT_SIZE_LTC    100

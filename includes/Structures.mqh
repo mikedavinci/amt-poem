@@ -7,6 +7,13 @@
 #property link      "https://tradejourney.ai"
 #property strict
 
+// Add new enum for instrument types
+enum ENUM_INSTRUMENT_TYPE {
+    INSTRUMENT_FOREX,
+    INSTRUMENT_CRYPTO
+};
+
+
 // Enum definitions
 enum ENUM_TRADE_SIGNAL {
     SIGNAL_BUY,
@@ -31,35 +38,43 @@ enum ENUM_CLOSE_REASON {
 
 // Signal Data Structure
 struct SignalData {
-    string            ticker;        // Trading symbol
-    ENUM_TRADE_SIGNAL signal;       // BUY, SELL, or NEUTRAL
-    double            price;         // Signal price
-    datetime          timestamp;     // Signal timestamp
-    string            pattern;       // Trading pattern
-    
+    string            ticker;         // Trading symbol
+    ENUM_TRADE_SIGNAL signal;        // BUY, SELL, or NEUTRAL
+    double            price;          // Signal price
+    datetime          timestamp;      // Signal timestamp
+    string            pattern;        // Trading pattern
+    ENUM_INSTRUMENT_TYPE instrumentType; // Forex or Crypto
+
     // Constructor
-    SignalData() : ticker(""), signal(SIGNAL_NEUTRAL), price(0), timestamp(0), pattern("") {}
+    SignalData() : ticker(""), signal(SIGNAL_NEUTRAL), price(0),
+                  timestamp(0), pattern(""),
+                  instrumentType(INSTRUMENT_FOREX) {}
 };
 
 // Trade Record Structure
 struct TradeRecord {
-    int               ticket;        // Trade ticket number
-    string            symbol;        // Trading symbol
-    ENUM_TRADE_SIGNAL direction;    // Trade direction
-    double            lots;          // Position size
-    double            openPrice;     // Entry price
-    double            closePrice;    // Exit price
-    double            stopLoss;      // Stop loss price
-    datetime          openTime;      // Entry time
-    datetime          closeTime;     // Exit time
-    ENUM_CLOSE_REASON closeReason;  // Reason for closure
-    double            profit;        // Final P/L
-    string            comment;       // Additional info
-    
+    int               ticket;         // Trade ticket number
+    string            symbol;         // Trading symbol
+    ENUM_TRADE_SIGNAL direction;     // Trade direction
+    double            lots;           // Position size
+    double            openPrice;      // Entry price
+    double            closePrice;     // Exit price
+    double            stopLoss;       // Stop loss price
+    double            trailingStop;   // Current trailing stop level
+    bool             trailingStopHit; // Flag for trailing stop hit
+    datetime          openTime;       // Entry time
+    datetime          closeTime;      // Exit time
+    ENUM_CLOSE_REASON closeReason;   // Reason for closure
+    double            profit;         // Final P/L
+    string            comment;        // Additional info
+    ENUM_INSTRUMENT_TYPE instrumentType; // Forex or Crypto
+
     // Constructor
     TradeRecord() : ticket(0), symbol(""), direction(SIGNAL_NEUTRAL), lots(0),
-                    openPrice(0), closePrice(0), stopLoss(0), openTime(0),
-                    closeTime(0), closeReason(CLOSE_MANUAL), profit(0), comment("") {}
+                    openPrice(0), closePrice(0), stopLoss(0), trailingStop(0),
+                    trailingStopHit(false), openTime(0), closeTime(0),
+                    closeReason(CLOSE_MANUAL), profit(0), comment(""),
+                    instrumentType(INSTRUMENT_FOREX) {}
 };
 
 // Position Metrics Structure
