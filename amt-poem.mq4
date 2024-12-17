@@ -586,7 +586,7 @@ bool ParseSignal(string response, SignalData &signal) {
         signalStr = StringSubstr(response, 1, firstClosingBrace + 1);
     }
 
-    Logger.Debug("Processing signal string: " + signalStr);
+    Logger.Debug(StringFormat("Extracted signal string (length: %d): %s", StringLen(signalStr), signalStr));
 
     string ticker = "";
     string action = "";
@@ -605,9 +605,21 @@ bool ParseSignal(string response, SignalData &signal) {
     // Parse action (signal)
     if(StringFind(signalStr, "\"action\":\"") >= 0) {
         int start = StringFind(signalStr, "\"action\":\"") + 9;
-        int end = StringFind(signalStr, "\"", start);
+        int end = StringFind(signalStr, "\",", start);  // Look for "," after the closing quote
+        if(end == -1) {
+            Logger.Error("Malformed action field in signal");
+            return false;
+        }
         action = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Raw action from API: '" + action + "'");
+        Logger.Debug(StringFormat("Raw action from API (Length: %d): '%s'", StringLen(action), action));
+
+        // Clean up the action string
+           action = StringTrimRight(StringTrimLeft(action));
+           Logger.Debug(StringFormat("Cleaned action (Length: %d): '%s'", StringLen(action), action));
+
+           // Convert and compare
+           action = ConvertToUpper(action);
+           Logger.Debug(StringFormat("Final action for comparison (Length: %d): '%s'", StringLen(action), action));
     }
 
     // Parse price
@@ -654,27 +666,25 @@ bool ParseSignal(string response, SignalData &signal) {
    // Set signal type with explicit validation and logging
    Logger.Debug("Setting signal type for action: '" + action + "'");
 
-   action = StringTrimLeft(StringTrimRight(action));
-   action = ConvertToUpper(action);  // Use our helper function instead
-
    Logger.Debug("Comparing action: '" + action + "' with 'BUY' and 'SELL'");
 
     Logger.Debug(StringFormat("StringCompare results - BUY: %d, SELL: %d",
         StringCompare(action, "BUY"), StringCompare(action, "SELL")));
 
-    // Simple direct comparison without any string manipulation
-        if(action == "BUY") {
-            signal.signal = SIGNAL_BUY;
-            Logger.Debug("Signal set to BUY");
-        }
-        else if(action == "SELL") {
-            signal.signal = SIGNAL_SELL;
-            Logger.Debug("Signal set to SELL");
-        }
-        else {
-            Logger.Error("Invalid action received: " + action);
-            return false;  // Invalid signal type should fail parsing
-        }
+    // Direct comparison after cleaning
+    Logger.Debug(StringFormat("Attempting to match action '%s'", action));
+    if(action == "BUY") {
+        signal.signal = SIGNAL_BUY;
+        Logger.Debug("Signal set to BUY (1)");
+    }
+    else if(action == "SELL") {
+        signal.signal = SIGNAL_SELL;
+        Logger.Debug("Signal set to SELL (2)");
+    }
+    else {
+        Logger.Error(StringFormat("Invalid action received: '%s' (Length: %d)", action, StringLen(action)));
+        return false;
+    }
 
     // Validate all required fields
     bool validSignal = (ticker != "" && action != "" && price > 0 && signal.timestamp > 0);
@@ -687,7 +697,7 @@ bool ParseSignal(string response, SignalData &signal) {
         signal.pattern = pattern;
         parseSuccess = true;
 
-        Logger.Info(StringFormat(
+      Logger.Info(StringFormat(
             "Successfully parsed signal: Symbol=%s, Action=%s, Price=%.5f, Pattern=%s, Timestamp=%s, Signal Type=%d",
             signal.ticker,
             action,
