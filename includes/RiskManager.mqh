@@ -21,7 +21,8 @@ private:
     double          m_riskPercent;      // Risk percentage per trade
     double          m_maxAccountRisk;   // Maximum total account risk
     double          m_marginBuffer;     // Margin safety buffer (percentage)
-    
+
+public:
     // Calculate monetary risk for a position
     double CalculatePositionRisk(double lots, double entryPrice, double stopLoss) {
         if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) return 0;

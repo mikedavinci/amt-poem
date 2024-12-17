@@ -10,6 +10,7 @@
 #include "Constants.mqh"
 #include "Structures.mqh"
 #include "SymbolInfo.mqh"
+#include "RiskManager.mqh"
 #include "Logger.mqh"
 
 //+------------------------------------------------------------------+
@@ -19,6 +20,7 @@ class CTradeManager {
 private:
     // Member variables
     CSymbolInfo*    m_symbolInfo;            // Symbol information
+    CRiskManager*    m_riskManager;        // Risk management
     TradeRecord     m_lastTrade;             // Last trade record
     int             m_slippage;              // Maximum allowed slippage
     int             m_maxRetries;            // Maximum retry attempts
@@ -30,17 +32,33 @@ private:
     bool CanOpenNewPosition(ENUM_TRADE_SIGNAL newSignal) {
         if(!m_awaitingOppositeSignal) return true;
 
+        Logger.Debug(StringFormat(
+            "Signal Validation After Stop Loss:" +
+            "\nLast Closed Direction: %s" +
+            "\nNew Signal Direction: %s" +
+            "\nAwaiting Opposite Signal: %s",
+            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+            newSignal == SIGNAL_BUY ? "BUY" : "SELL",
+            m_awaitingOppositeSignal ? "Yes" : "No"
+        ));
+
         // If awaiting opposite signal, only allow if signal is opposite to last closed position
         if(m_lastClosedDirection == SIGNAL_BUY && newSignal == SIGNAL_SELL) {
             m_awaitingOppositeSignal = false;
+            Logger.Info("Opposite signal (SELL) received after BUY stop loss - allowing trade");
             return true;
         }
         if(m_lastClosedDirection == SIGNAL_SELL && newSignal == SIGNAL_BUY) {
             m_awaitingOppositeSignal = false;
+            Logger.Info("Opposite signal (BUY) received after SELL stop loss - allowing trade");
             return true;
         }
 
-        Logger.Warning("Awaiting opposite signal before opening new position");
+        Logger.Warning(StringFormat(
+            "Trade rejected - Awaiting %s signal after stop loss hit on %s position",
+            m_lastClosedDirection == SIGNAL_BUY ? "SELL" : "BUY",
+            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+        ));
         return false;
     }
 
@@ -95,12 +113,50 @@ private:
             minStopDistance = FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
         }
 
-        // Use the most conservative stop (smallest distance)
-        double stopDistance = MathMin(atrStopDistance, emergencyStopDistance);
-        stopDistance = MathMax(stopDistance, minStopDistance);
+        // Add detailed logging of all calculated stops
+            Logger.Debug(StringFormat(
+                "Stop Distance Calculations:" +
+                "\nSymbol: %s" +
+                "\nPrice: %.5f" +
+                "\nATR Value: %.5f" +
+                "\nATR Stop Distance: %.5f" +
+                "\nEmergency Stop Distance: %.5f" +
+                "\nMinimum Stop Distance: %.5f",
+                m_symbolInfo.GetSymbol(),
+                currentPrice,
+                atrValue,
+                atrStopDistance,
+                emergencyStopDistance,
+                minStopDistance
+            ));
 
-        return stopDistance;
-    }
+           // Use the most conservative stop and log which one was chosen
+           double stopDistance = MathMin(atrStopDistance, emergencyStopDistance);
+           string stopType;
+
+           if(stopDistance == atrStopDistance) {
+               stopType = "ATR";
+           } else {
+               stopType = "Emergency";
+           }
+
+           stopDistance = MathMax(stopDistance, minStopDistance);
+           if(stopDistance == minStopDistance) {
+               stopType = "Fixed";
+           }
+
+           Logger.Debug(StringFormat(
+               "Final Stop Distance Selected:" +
+               "\nType: %s" +
+               "\nDistance: %.5f" +
+               "\nFinal Stop Price: %.5f",
+               stopType,
+               stopDistance,
+               orderType == OP_BUY ? currentPrice - stopDistance : currentPrice + stopDistance
+           ));
+
+           return stopDistance;
+       }
 
     bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
                            double tp, string comment) {
@@ -377,9 +433,10 @@ bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
 
 public:
     // Constructor
-    CTradeManager(CSymbolInfo* symbolInfo, int slippage = DEFAULT_SLIPPAGE,
+    CTradeManager(CSymbolInfo* symbolInfo, CRiskManager* riskManager, int slippage = DEFAULT_SLIPPAGE,
                   int maxRetries = MAX_RETRY_ATTEMPTS)
         : m_symbolInfo(symbolInfo),
+          m_riskManager(riskManager),
           m_slippage(slippage),
           m_maxRetries(maxRetries) {
         m_isTradeAllowed = true;
@@ -490,8 +547,66 @@ public:
                 return false;
             }
 
-            bool success = OrderModify(ticket, OrderOpenPrice(), sl, tp, 0);
-            if(!success) {
+            // Get current position details
+            double currentLots = OrderLots();
+            double openPrice = OrderOpenPrice();
+            double currentSL = OrderStopLoss();
+
+            // Calculate current and proposed risk
+            double currentRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, currentSL);
+            double proposedRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, sl);
+            double accountBalance = AccountBalance();
+
+            // Log risk change details
+            Logger.Debug(StringFormat(
+                "Stop Loss Modification Risk Analysis:" +
+                "\nTicket: %d" +
+                "\nCurrent Risk: %.2f%%" +
+                "\nProposed Risk: %.2f%%" +
+                "\nCurrent SL: %.5f" +
+                "\nProposed SL: %.5f" +
+                "\nLots: %.2f",
+                ticket,
+                (currentRisk/accountBalance) * 100,
+                (proposedRisk/accountBalance) * 100,
+                currentSL,
+                sl,
+                currentLots
+            ));
+
+            // Validate new stop loss against risk parameters
+            if(!m_riskManager.ValidatePositionRisk(currentLots, openPrice, sl)) {
+                Logger.Warning(StringFormat(
+                    "Stop loss modification rejected - Risk limits exceeded:" +
+                    "\nTicket: %d" +
+                    "\nCurrent Risk: %.2f%%" +
+                    "\nRejected Risk: %.2f%%",
+                    ticket,
+                    (currentRisk/accountBalance) * 100,
+                    (proposedRisk/accountBalance) * 100
+                ));
+                return false;
+            }
+
+            // Proceed with modification
+            bool success = OrderModify(ticket, openPrice, sl, tp, 0);
+
+            if(success) {
+                double totalAccountRisk = m_riskManager.CalculateTotalAccountRisk();
+                Logger.Info(StringFormat(
+                    "Position modified successfully:" +
+                    "\nTicket: %d" +
+                    "\nOld SL: %.5f" +
+                    "\nNew SL: %.5f" +
+                    "\nNew Position Risk: %.2f%%" +
+                    "\nTotal Account Risk: %.2f%%",
+                    ticket,
+                    currentSL,
+                    sl,
+                    (proposedRisk/accountBalance) * 100,
+                    (totalAccountRisk/accountBalance) * 100
+                ));
+            } else {
                 LogTradeError("Order modify failed", GetLastError());
             }
 

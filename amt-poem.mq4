@@ -61,23 +61,24 @@ int OnInit() {
     // Log initialization start
     Logger.Info(StringFormat("Initializing %s EA...", SYSTEM_NAME));
 
-    // Initialize symbol info
+    // Initialize symbol info first
     g_symbolInfo = new CSymbolInfo(_Symbol);
     if(g_symbolInfo == NULL) {
         Logger.Error("Failed to initialize SymbolInfo");
         return INIT_FAILED;
     }
 
-    // Initialize managers
-    g_tradeManager = new CTradeManager(g_symbolInfo);
-    if(g_tradeManager == NULL) {
-        Logger.Error("Failed to initialize TradeManager");
-        return INIT_FAILED;
-    }
-
+    // Initialize RiskManager before TradeManager
     g_riskManager = new CRiskManager(g_symbolInfo, RISK_PERCENT, MAX_ACCOUNT_RISK, MARGIN_BUFFER);
     if(g_riskManager == NULL) {
         Logger.Error("Failed to initialize RiskManager");
+        return INIT_FAILED;
+    }
+
+    // Now initialize TradeManager with the initialized RiskManager
+    g_tradeManager = new CTradeManager(g_symbolInfo, g_riskManager, DEFAULT_SLIPPAGE, MAX_RETRY_ATTEMPTS);
+    if(g_tradeManager == NULL) {
+        Logger.Error("Failed to initialize TradeManager");
         return INIT_FAILED;
     }
 
@@ -182,7 +183,7 @@ void OnTick() {
     // Monitor positions (includes trailing stops and profit protection)
         if(ENABLE_PROFIT_PROTECTION) {
             static datetime lastCheck = 0;
-            if(TimeCurrent() - lastCheck >= 60) {
+            if(TimeCurrent() - lastCheck >= PROFIT_CHECK_INTERVAL) {
                 g_tradeManager.MonitorPositions();
                 lastCheck = TimeCurrent();
             }
@@ -196,8 +197,8 @@ void PerformPeriodicChecks() {
     static datetime lastCheck = 0;
     datetime currentTime = TimeCurrent();
 
-    // Run checks every 5 minutes
-    if(currentTime - lastCheck >= 300) {
+    // Run checks every RISK_CHECK_INTERVAL minutes
+    if(currentTime - lastCheck >= RISK_CHECK_INTERVAL) {
         // Check account status
         if(!g_riskManager.IsMarginSafe()) {
             Logger.Warning("Margin level below safe threshold");
@@ -224,7 +225,7 @@ bool IsTimeToCheck() {
     static datetime lastSignalCheck = 0;
     datetime currentTime = TimeCurrent();
 
-    if(currentTime - lastSignalCheck < 60) {  // Check every minute
+    if(currentTime - lastSignalCheck < SIGNAL_CHECK_INTERVAL) {
         return false;
     }
 
