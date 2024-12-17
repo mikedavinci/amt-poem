@@ -160,7 +160,7 @@ void OnTick() {
     if(!g_tradeManager.CanTrade()) {
         static datetime lastWarning = 0;
         if(TimeCurrent() - lastWarning >= 300) {  // Log every 5 minutes
-            Logger.Warning("Trading not currently allowed");
+       //     Logger.Warning("Trading not currently allowed");
             lastWarning = TimeCurrent();
         }
         return;
@@ -205,13 +205,13 @@ void PerformPeriodicChecks() {
 
         // Log current market conditions
         string liquidity = g_sessionManager.GetLiquidityLevel();
-        Logger.Debug(StringFormat(
-            "Market Conditions:" +
-            "\nLiquidity: %s" +
-            "\nSpread: %.5f",
-            liquidity,
-            g_symbolInfo.GetSpread()
-        ));
+        // Logger.Debug(StringFormat(
+            // "Market Conditions:" +
+            // "\nLiquidity: %s" +
+            // "\nSpread: %.5f",
+            // liquidity,
+            // g_symbolInfo.GetSpread()
+        // ));
 
         lastCheck = currentTime;
     }
@@ -611,15 +611,25 @@ bool ParseSignal(string response, SignalData &signal) {
             return false;
         }
         action = StringSubstr(signalStr, start, end - start);
-        Logger.Debug(StringFormat("Raw action from API (Length: %d): '%s'", StringLen(action), action));
+        // Logger.Debug(StringFormat("Raw action from API (Length: %d): '%s'", StringLen(action), action));
+
+        // Remove quotes from both ends if they exist
+        if(StringGetCharacter(action, 0) == '"') {
+            action = StringSubstr(action, 1);
+        }
+        if(StringGetCharacter(action, StringLen(action)-1) == '"') {
+            action = StringSubstr(action, 0, StringLen(action)-1);
+        }
+
+        // Logger.Debug(StringFormat("Action after quote removal (Length: %d): '%s'", StringLen(action), action));
 
         // Clean up the action string
-           action = StringTrimRight(StringTrimLeft(action));
-           Logger.Debug(StringFormat("Cleaned action (Length: %d): '%s'", StringLen(action), action));
+        action = StringTrimRight(StringTrimLeft(action));
+        // Logger.Debug(StringFormat("Cleaned action (Length: %d): '%s'", StringLen(action), action));
 
-           // Convert and compare
-           action = ConvertToUpper(action);
-           Logger.Debug(StringFormat("Final action for comparison (Length: %d): '%s'", StringLen(action), action));
+       // Convert and compare
+       action = ConvertToUpper(action);
+       // Logger.Debug(StringFormat("Final action for comparison (Length: %d): '%s'", StringLen(action), action));
     }
 
     // Parse price
@@ -637,7 +647,7 @@ bool ParseSignal(string response, SignalData &signal) {
         int start = StringFind(signalStr, "\"timestamp\":\"") + 12;
         int end = StringFind(signalStr, "\"", start);
         string timestampStr = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Raw timestamp: " + timestampStr);
+        //Logger.Debug("Raw timestamp: " + timestampStr);
 
         // Parse MM/DD/YYYY HH:MM:SS PM format
         int month = (int)StringToInteger(StringSubstr(timestampStr, 0, 2));
@@ -652,7 +662,7 @@ bool ParseSignal(string response, SignalData &signal) {
 
         signal.timestamp = StringToTime(StringFormat("%04d.%02d.%02d %02d:%02d:00",
                                                year, month, day, hour, minute));
-        Logger.Debug("Parsed timestamp: " + TimeToString(signal.timestamp));
+        //Logger.Debug("Parsed timestamp: " + TimeToString(signal.timestamp));
     }
 
     // Parse pattern (signalPattern)
@@ -660,7 +670,7 @@ bool ParseSignal(string response, SignalData &signal) {
         int start = StringFind(signalStr, "\"signalPattern\":\"") + 16;
         int end = StringFind(signalStr, "\"", start);
         pattern = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Parsed pattern: " + pattern);
+        //Logger.Debug("Parsed pattern: " + pattern);
     }
 
    // Set signal type with explicit validation and logging
@@ -671,18 +681,18 @@ bool ParseSignal(string response, SignalData &signal) {
     Logger.Debug(StringFormat("StringCompare results - BUY: %d, SELL: %d",
         StringCompare(action, "BUY"), StringCompare(action, "SELL")));
 
-    // Direct comparison after cleaning
+    // Direct comparison (no conversion needed as API sends uppercase)
     Logger.Debug(StringFormat("Attempting to match action '%s'", action));
-    if(action == "BUY") {
-        signal.signal = SIGNAL_BUY;
-        Logger.Debug("Signal set to BUY (1)");
-    }
-    else if(action == "SELL") {
+    if(action == "SELL") {
         signal.signal = SIGNAL_SELL;
-        Logger.Debug("Signal set to SELL (2)");
+        //Logger.Debug("Signal set to SELL (2)");
+    }
+    else if(action == "BUY") {
+        signal.signal = SIGNAL_BUY;
+        //Logger.Debug("Signal set to BUY (1)");
     }
     else {
-        Logger.Error(StringFormat("Invalid action received: '%s' (Length: %d)", action, StringLen(action)));
+        //Logger.Error(StringFormat("Invalid action received: '%s' (Length: %d)", action, StringLen(action)));
         return false;
     }
 

@@ -76,7 +76,7 @@
 
 // API Settings
 #define API_TIMEOUT             5000
-#define API_RETRY_INTERVAL      1000
+#define API_RETRY_INTERVAL      1000 // 1 second
 
 #define INITIAL_RETRY_DELAY 100    // 100ms initial delay
 #define MAX_RETRY_DELAY    1000    // 1 second maximum delay

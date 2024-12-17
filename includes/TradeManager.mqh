@@ -105,7 +105,7 @@ private:
     bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
                            double tp, string comment) {
 
-     Logger.Debug(StringFormat("ExecuteMarketOrder - Received comment: '%s'", comment));
+     //Logger.Debug(StringFormat("ExecuteMarketOrder - Received comment: '%s'", comment));
 
         int ticket = -1;
         int attempts = 0;
@@ -129,10 +129,10 @@ private:
             double currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
 
              // Log attempt details
-                    Logger.Debug(StringFormat(
-                        "Attempting order - Type: %s, Lots: %.2f, Price: %.5f, SL: %.5f, TP: %.5f, Comment: '%s'",
-                        type == OP_BUY ? "BUY" : "SELL", lots, currentPrice, sl, tp, comment
-                    ));
+                    //Logger.Debug(StringFormat(
+                        // "Attempting order - Type: %s, Lots: %.2f, Price: %.5f, SL: %.5f, TP: %.5f, Comment: '%s'",
+                        // type == OP_BUY ? "BUY" : "SELL", lots, currentPrice, sl, tp, comment
+                    // ));
 
             // Validate entry price against signal price
             if(!ValidateEntryPrice(signalPrice, currentPrice, type)) {
@@ -385,10 +385,30 @@ public:
         m_isTradeAllowed = true;
     }
 
+    bool HasOpenPositionInDirection(ENUM_TRADE_SIGNAL direction) {
+        int total = OrdersTotal();
+        for(int i = 0; i < total; i++) {
+            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    ENUM_TRADE_SIGNAL posDirection =
+                        (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+                    if(posDirection == direction) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // Trade Execution Methods
     bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
         if(!CanTrade()) return false;
         if(!CanOpenNewPosition(SIGNAL_BUY)) return false;
+
+        // Check for existing buy position
+        if(HasOpenPositionInDirection(SIGNAL_BUY)) {
+            Logger.Warning("Buy position already exists - skipping");
+            return false;
+        }
 
         // Close any existing sell positions first
         if(HasOpenPosition()) {
@@ -411,9 +431,11 @@ public:
         if(!CanTrade()) return false;
         if(!CanOpenNewPosition(SIGNAL_SELL)) return false;
 
-         // Ensure comment is valid
-            if(comment == NULL) comment = "";
-            comment = StringConcatenate("SELL:", comment);
+        // Check for existing sell position
+        if(HasOpenPositionInDirection(SIGNAL_SELL)) {
+            Logger.Warning("Sell position already exists - skipping");
+            return false;
+        }
 
         // Close any existing buy positions first
         if(HasOpenPosition()) {
