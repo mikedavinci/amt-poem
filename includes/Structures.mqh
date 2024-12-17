@@ -16,9 +16,9 @@ enum ENUM_INSTRUMENT_TYPE {
 
 // Enum definitions
 enum ENUM_TRADE_SIGNAL {
-    SIGNAL_BUY,
-    SIGNAL_SELL,
-    SIGNAL_NEUTRAL
+    SIGNAL_NEUTRAL = 0,
+    SIGNAL_BUY = 1,
+    SIGNAL_SELL = 2
 };
 
 enum ENUM_SESSION_TYPE {

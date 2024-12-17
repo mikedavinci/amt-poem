@@ -75,9 +75,17 @@ private:
                 m_contractSize = CRYPTO_CONTRACT_SIZE_DEFAULT;
                 m_marginPercent = CRYPTO_MARGIN_PERCENT_DEFAULT;
             }
+            m_pipSize = m_point;  // For crypto, pip size equals point size
         } else {
             m_contractSize = FOREX_CONTRACT_SIZE;
             m_marginPercent = FOREX_MARGIN_PERCENT;
+            m_pipSize = m_point * 10;  // For forex, pip size is typically 10 points
+
+            // Check if it's a JPY pair
+            m_isJPYPair = (StringFind(m_symbol, "JPY") >= 0);
+            if(m_isJPYPair) {
+                m_pipSize = m_point * 100;  // JPY pairs have different pip size
+            }
         }
     }
 
