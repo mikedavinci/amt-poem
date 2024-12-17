@@ -187,22 +187,6 @@ void OnTick() {
     if(IsTimeToCheck()) {
         ProcessSignals();
     }
-
-    void ProcessSignals() {
-            string response = FetchSignals();
-            if(response == "") return;
-
-            SignalData signal;
-            if(ParseSignal(response, signal)) {
-                if(ValidateSignal(signal)) {
-                    // Set instrument type based on symbol
-                    signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
-                        INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
-
-                    ExecuteSignal(signal);
-                }
-            }
-        }
     
     // Monitor open positions
     if(ENABLE_PROFIT_PROTECTION) {
@@ -260,10 +244,14 @@ bool IsTimeToCheck() {
 void ProcessSignals() {
     string response = FetchSignals();
     if(response == "") return;
-    
+
     SignalData signal;
     if(ParseSignal(response, signal)) {
         if(ValidateSignal(signal)) {
+            // Set instrument type based on symbol
+            signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
+                INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
+
             // Check for existing positions with opposite direction
             if(g_tradeManager.HasOpenPosition()) {
                 PositionMetrics metrics = g_tradeManager.GetPositionMetrics();

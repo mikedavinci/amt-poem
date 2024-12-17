@@ -24,6 +24,7 @@ private:
     string          m_symbol;           // Symbol name
     ENUM_SYMBOL_TYPE m_symbolType;      // Symbol classification
     bool            m_isJPYPair;        // JPY pair flag
+    double          m_atr;              // Current ATR value
     int             m_digits;           // Price digits
     double          m_contractSize;     // Contract size
     double          m_marginPercent;    // Margin requirement
@@ -36,6 +37,11 @@ private:
         DetermineSymbolType();
         SetSymbolProperties();
     }
+
+    // method to calculate ATR
+        void CalculateATR() {
+            m_atr = iATR(_Symbol, PERIOD_CURRENT, ATR_PERIOD, 0);
+        }
     
     // Determine symbol type and characteristics
     void DetermineSymbolType() {
@@ -165,4 +171,37 @@ public:
         return NormalizePrice(orderType == OP_BUY ? 
                entryPrice - stopDistance : entryPrice + stopDistance);
     }
+
+    // Add method to get ATR-based stop loss
+
+        // Add these methods
+         double GetATR() {
+                CalculateATR();
+                return m_atr;
+            }
+
+            double GetATRStopLoss(int orderType, double entryPrice) {
+                CalculateATR();
+
+                double multiplier = IsCryptoPair() ?
+                    CRYPTO_ATR_MULTIPLIER : FOREX_ATR_MULTIPLIER;
+
+                double stopDistance = m_atr * multiplier;
+
+                // Apply minimum stop distance based on instrument type
+                if(IsCryptoPair()) {
+                    double minStop = entryPrice * (CRYPTO_STOP_PERCENT / 100.0);
+                    stopDistance = MathMax(stopDistance, minStop);
+                } else {
+                    double minStop = FOREX_STOP_PIPS * GetPipSize();
+                    stopDistance = MathMax(stopDistance, minStop);
+                }
+
+                // Calculate and normalize stop loss price
+                double stopPrice = orderType == OP_BUY ?
+                    entryPrice - stopDistance :
+                    entryPrice + stopDistance;
+
+                return NormalizePrice(stopPrice);
+            }
 };
