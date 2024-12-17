@@ -35,6 +35,14 @@ private:
             // Forex risk calculation
             double tickValue = MarketInfo(m_symbolInfo.GetSymbol(), MODE_TICKVALUE);
             double point = m_symbolInfo.GetPoint();
+
+            // Add validation
+            if(point <= 0) {
+                Logger.Error("Invalid point value");
+                return 0;
+            }
+
+
             return (stopDistance / point) * tickValue * lots;
         }
     }
@@ -72,9 +80,15 @@ public:
         
         if(m_symbolInfo.IsCryptoPair()) {
             // Calculate crypto position size
-            double oneUnitValue = entryPrice * m_symbolInfo.GetContractSize();
-            double riskPerLot = stopDistance * oneUnitValue;
-            
+                double oneUnitValue = entryPrice * m_symbolInfo.GetContractSize();
+                double riskPerLot = stopDistance * oneUnitValue;
+
+            // Add validation to prevent division by zero
+                if(riskPerLot <= 0) {
+                    Logger.Error("Invalid risk per lot calculation");
+                    return 0;
+                }
+
             // Initial lot size based on risk
             lotSize = maxRiskAmount / riskPerLot;
             
@@ -97,6 +111,13 @@ public:
             
             // Calculate risk per standard lot
             double riskPerLot = stopPips * pipValue;
+
+             // Add validation to prevent division by zero - for forex pairs
+                if(riskPerLot <= 0) {
+                    Logger.Error(StringFormat("Invalid risk per lot calculation for forex: PipValue=%.5f, StopPips=%.5f",
+                                pipValue, stopPips));
+                    return 0;
+                }
             
             // Initial lot size based on risk
             lotSize = maxRiskAmount / riskPerLot;

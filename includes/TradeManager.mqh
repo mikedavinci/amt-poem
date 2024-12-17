@@ -476,11 +476,15 @@ public:
                         metrics.totalVolume += OrderLots();
                         metrics.weightedPrice += OrderOpenPrice() * OrderLots();
                         metrics.unrealizedPL += OrderProfit() + OrderSwap() + OrderCommission();
-                        metrics.usedMargin += OrderMargin();
+
+                        // Calculate margin for this position
+                        double contractSize = MarketInfo(OrderSymbol(), MODE_LOTSIZE);
+                        double marginRequired = MarketInfo(OrderSymbol(), MODE_MARGINREQUIRED);
+                        metrics.usedMargin += OrderLots() * marginRequired;
                     }
                 }
             }
-
+        
             if(metrics.totalPositions > 0) {
                 metrics.weightedPrice /= metrics.totalVolume;
             }
