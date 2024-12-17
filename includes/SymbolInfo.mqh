@@ -181,27 +181,58 @@ public:
             }
 
             double GetATRStopLoss(int orderType, double entryPrice) {
-                CalculateATR();
+                    CalculateATR();
 
-                double multiplier = IsCryptoPair() ?
-                    CRYPTO_ATR_MULTIPLIER : FOREX_ATR_MULTIPLIER;
+                    double multiplier = IsCryptoPair() ?
+                        CRYPTO_ATR_MULTIPLIER : FOREX_ATR_MULTIPLIER;
 
-                double stopDistance = m_atr * multiplier;
+                    double atrStopDistance = m_atr * multiplier;
 
-                // Apply minimum stop distance based on instrument type
-                if(IsCryptoPair()) {
-                    double minStop = entryPrice * (CRYPTO_STOP_PERCENT / 100.0);
-                    stopDistance = MathMax(stopDistance, minStop);
-                } else {
-                    double minStop = FOREX_STOP_PIPS * GetPipSize();
-                    stopDistance = MathMax(stopDistance, minStop);
+                    // Calculate emergency stop distance
+                    double emergencyStopDistance;
+                    if(IsCryptoPair()) {
+                        emergencyStopDistance = entryPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+                    } else {
+                        emergencyStopDistance = FOREX_EMERGENCY_PIPS * GetPipSize();
+                    }
+
+                    // ATR stop should not exceed emergency stop distance
+                    double finalStopDistance = MathMin(atrStopDistance, emergencyStopDistance);
+
+                    // Calculate and normalize stop loss price
+                    double stopPrice;
+                    if(orderType == OP_BUY) {
+                        stopPrice = entryPrice - finalStopDistance;
+
+                        // Apply minimum stop distance
+                        double minStopDistance = IsCryptoPair() ?
+                            entryPrice * (CRYPTO_STOP_PERCENT / 100.0) :
+                            FOREX_STOP_PIPS * GetPipSize();
+
+                        stopPrice = MathMin(stopPrice, entryPrice - minStopDistance);
+                    } else {
+                        stopPrice = entryPrice + finalStopDistance;
+
+                        // Apply minimum stop distance
+                        double minStopDistance = IsCryptoPair() ?
+                            entryPrice * (CRYPTO_STOP_PERCENT / 100.0) :
+                            FOREX_STOP_PIPS * GetPipSize();
+
+                        stopPrice = MathMax(stopPrice, entryPrice + minStopDistance);
+                    }
+
+                    Logger.Debug(StringFormat(
+                        "Stop Loss Calculation:" +
+                        "\nATR Stop Distance: %.5f" +
+                        "\nEmergency Stop Distance: %.5f" +
+                        "\nFinal Stop Distance: %.5f" +
+                        "\nFinal Stop Price: %.5f",
+                        atrStopDistance,
+                        emergencyStopDistance,
+                        finalStopDistance,
+                        stopPrice
+                    ));
+
+                    return NormalizePrice(stopPrice);
                 }
-
-                // Calculate and normalize stop loss price
-                double stopPrice = orderType == OP_BUY ?
-                    entryPrice - stopDistance :
-                    entryPrice + stopDistance;
-
-                return NormalizePrice(stopPrice);
-            }
 };

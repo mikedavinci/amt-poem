@@ -174,28 +174,19 @@ void OnTick() {
     // Perform periodic checks
     PerformPeriodicChecks();
 
-    // Check trailing stops
+      // Check for new signals
+        if(IsTimeToCheck()) {
+            ProcessSignals();
+        }
+
+    // Monitor positions (includes trailing stops and profit protection)
         if(ENABLE_PROFIT_PROTECTION) {
-            static datetime lastTrailingCheck = 0;
-            if(TimeCurrent() - lastTrailingCheck >= 60) {  // Check every minute
-                g_tradeManager.CheckTrailingStop();
-                lastTrailingCheck = TimeCurrent();
+            static datetime lastCheck = 0;
+            if(TimeCurrent() - lastCheck >= 60) {
+                g_tradeManager.MonitorPositions();
+                lastCheck = TimeCurrent();
             }
         }
-    
-    // Check for new signals
-    if(IsTimeToCheck()) {
-        ProcessSignals();
-    }
-    
-    // Monitor open positions
-    if(ENABLE_PROFIT_PROTECTION) {
-        static datetime lastProtectionCheck = 0;
-        if(TimeCurrent() - lastProtectionCheck >= 60) {  // Check every minute
-            MonitorPositions();
-            lastProtectionCheck = TimeCurrent();
-        }
-    }
 }
 
 //+------------------------------------------------------------------+
@@ -252,14 +243,6 @@ void ProcessSignals() {
             signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
                 INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
 
-            // Check for existing positions with opposite direction
-            if(g_tradeManager.HasOpenPosition()) {
-                PositionMetrics metrics = g_tradeManager.GetPositionMetrics();
-                if(metrics.totalPositions > 0) {
-                    // Close existing positions before opening new one
-                    CloseAllPositions("Signal reversal");
-                }
-            }
             ExecuteSignal(signal);
         }
     }
