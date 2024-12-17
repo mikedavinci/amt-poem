@@ -289,8 +289,7 @@ bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
         }
 
         void LogTradeError(string operation, int errorCode) {
-            string errorDesc = ErrorDescription(errorCode);
-            string message = StringFormat("%s: Error %d - %s", operation, errorCode, errorDesc);
+            string message = StringFormat("%s: Error %d - %s", operation, errorCode);
             Logger.Error(message);
         }
 

@@ -233,6 +233,7 @@ bool IsTimeToCheck() {
 }
 
 void ProcessSignals() {
+
     string response = FetchSignals();
     if(response == "") return;
 
