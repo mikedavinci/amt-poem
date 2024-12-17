@@ -558,9 +558,17 @@ string FetchSignals() {
     return response;
 }
 
+
 //+------------------------------------------------------------------+
 //| Parse signal from API response                                     |
 //+------------------------------------------------------------------+
+
+string ConvertToUpper(string text) {
+    string result = text;
+    StringToUpper(result);  // This modifies the string in place
+    return result;
+}
+
 bool ParseSignal(string response, SignalData &signal) {
     if(response == "") return false;
 
@@ -599,7 +607,7 @@ bool ParseSignal(string response, SignalData &signal) {
         int start = StringFind(signalStr, "\"action\":\"") + 9;
         int end = StringFind(signalStr, "\"", start);
         action = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Parsed action: " + action);
+        Logger.Debug("Raw action from API: '" + action + "'");
     }
 
     // Parse price
@@ -631,8 +639,8 @@ bool ParseSignal(string response, SignalData &signal) {
         if(StringFind(timestampStr, "AM") >= 0 && hour == 12) hour = 0;
 
         signal.timestamp = StringToTime(StringFormat("%04d.%02d.%02d %02d:%02d:00",
-                                                   year, month, day, hour, minute));
-        Logger.Debug("Parsed timestamp: " + TimeToString(signal.timestamp, TIME_DATE|TIME_MINUTES));
+                                               year, month, day, hour, minute));
+        Logger.Debug("Parsed timestamp: " + TimeToString(signal.timestamp));
     }
 
     // Parse pattern (signalPattern)
@@ -643,44 +651,50 @@ bool ParseSignal(string response, SignalData &signal) {
         Logger.Debug("Parsed pattern: " + pattern);
     }
 
-    // Set signal type with explicit validation and logging
-    Logger.Debug(StringFormat("Raw action from API: '%s'", action));
+   // Set signal type with explicit validation and logging
+   Logger.Debug("Setting signal type for action: '" + action + "'");
 
-    // Add trim to remove any whitespace
-    action = StringTrimLeft(StringTrimRight(action));
+   action = StringTrimLeft(StringTrimRight(action));
+   action = ConvertToUpper(action);  // Use our helper function instead
 
-    if(StringCompare(action, "BUY") == 0) {
-        signal.signal = SIGNAL_BUY;
-        Logger.Debug(StringFormat("Setting signal to BUY (value: %d)", SIGNAL_BUY));
-    }
-    else if(StringCompare(action, "SELL") == 0) {
-        signal.signal = SIGNAL_SELL;
-        Logger.Debug(StringFormat("Setting signal to SELL (value: %d)", SIGNAL_SELL));
-    }
-    else {
-        signal.signal = SIGNAL_NEUTRAL;
-        Logger.Debug(StringFormat("Unknown action '%s', defaulting to NEUTRAL (value: %d)",
-                     action, SIGNAL_NEUTRAL));
-    }
+   Logger.Debug("Comparing action: '" + action + "' with 'BUY' and 'SELL'");
 
-    // Additional validation debug
-    Logger.Debug(StringFormat("Final signal value: %d (BUY=%d, SELL=%d, NEUTRAL=%d)",
-                 signal.signal, SIGNAL_BUY, SIGNAL_SELL, SIGNAL_NEUTRAL));
+    Logger.Debug(StringFormat("StringCompare results - BUY: %d, SELL: %d",
+        StringCompare(action, "BUY"), StringCompare(action, "SELL")));
+
+    // Simple direct comparison without any string manipulation
+        if(action == "BUY") {
+            signal.signal = SIGNAL_BUY;
+            Logger.Debug("Signal set to BUY");
+        }
+        else if(action == "SELL") {
+            signal.signal = SIGNAL_SELL;
+            Logger.Debug("Signal set to SELL");
+        }
+        else {
+            Logger.Error("Invalid action received: " + action);
+            return false;  // Invalid signal type should fail parsing
+        }
 
     // Validate all required fields
-    if(ticker != "" && action != "" && price > 0 && signal.timestamp > 0) {
+    bool validSignal = (ticker != "" && action != "" && price > 0 && signal.timestamp > 0);
+    Logger.Debug(StringFormat("Signal validation - Ticker: %s, Action: %s, Price: %.5f, Timestamp: %s, Valid: %s",
+        ticker, action, price, TimeToString(signal.timestamp), validSignal ? "true" : "false"));
+
+    if(validSignal) {
         signal.ticker = ticker;
         signal.price = price;
         signal.pattern = pattern;
         parseSuccess = true;
 
         Logger.Info(StringFormat(
-            "Successfully parsed signal: Symbol=%s, Action=%s, Price=%.5f, Pattern=%s, Timestamp=%s",
+            "Successfully parsed signal: Symbol=%s, Action=%s, Price=%.5f, Pattern=%s, Timestamp=%s, Signal Type=%d",
             signal.ticker,
             action,
             signal.price,
             signal.pattern,
-            TimeToString(signal.timestamp)
+            TimeToString(signal.timestamp),
+            signal.signal
         ));
     } else {
         Logger.Error(StringFormat(
