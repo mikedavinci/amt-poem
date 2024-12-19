@@ -46,9 +46,9 @@
 #define CRYPTO_EMERGENCY_STOP_PERCENT 10.0
 
 // ATR-based Stops
-#define ATR_PERIOD               14      // Period for ATR calculation
-#define FOREX_ATR_MULTIPLIER     2.0     // Multiplier for forex pairs
-#define CRYPTO_ATR_MULTIPLIER    2.5     // Higher multiplier for crypto due to volatility
+// #define ATR_PERIOD               14      // Period for ATR calculation
+// #define FOREX_ATR_MULTIPLIER     2.0     // Multiplier for forex pairs
+// #define CRYPTO_ATR_MULTIPLIER    2.5     // Higher multiplier for crypto due to volatility
 
 // BREAKEVEN settings for Forex
 #define FOREX_BREAKEVEN_PROFIT_PIPS   10    // Pips of profit before breakeven

@@ -91,72 +91,45 @@ private:
 
 // Private Methods for Trade Operations
     double GetCoordinatedStopDistance(double currentPrice, int orderType) {
-        // Get ATR-based stop distance
-        double atrValue = m_symbolInfo.GetATR();
-        double multiplier = m_symbolInfo.IsCryptoPair() ?
-            CRYPTO_ATR_MULTIPLIER : FOREX_ATR_MULTIPLIER;
-        double atrStopDistance = atrValue * multiplier;
+    // Calculate regular stop distance
+    double regularStopDistance;
+    if(m_symbolInfo.IsCryptoPair()) {
+        regularStopDistance = currentPrice * (CRYPTO_STOP_PERCENT / 100.0);
+        Logger.Debug(StringFormat("Regular Crypto Stop: %.2f%%", CRYPTO_STOP_PERCENT));
+    } else {
+        regularStopDistance = FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
+        Logger.Debug(StringFormat("Regular Forex Stop: %d pips", FOREX_STOP_PIPS));
+    }
 
-        // Calculate emergency stop distance
-        double emergencyStopDistance;
-        if(m_symbolInfo.IsCryptoPair()) {
-            emergencyStopDistance = currentPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
-        } else {
-            emergencyStopDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
-        }
+    // Calculate emergency stop distance
+    double emergencyStopDistance;
+    if(m_symbolInfo.IsCryptoPair()) {
+        emergencyStopDistance = currentPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+        Logger.Debug(StringFormat("Emergency Crypto Stop: %.2f%%", CRYPTO_EMERGENCY_STOP_PERCENT));
+    } else {
+        emergencyStopDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
+        Logger.Debug(StringFormat("Emergency Forex Stop: %d pips", FOREX_EMERGENCY_PIPS));
+    }
 
-        // Get minimum stop distance
-        double minStopDistance;
-        if(m_symbolInfo.IsCryptoPair()) {
-            minStopDistance = currentPrice * (CRYPTO_STOP_PERCENT / 100.0);
-        } else {
-            minStopDistance = FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
-        }
+    // Use regular stop distance but never exceed emergency distance
+    double finalStopDistance = MathMin(regularStopDistance, emergencyStopDistance);
 
-        // Add detailed logging of all calculated stops
-            Logger.Debug(StringFormat(
-                "Stop Distance Calculations:" +
-                "\nSymbol: %s" +
-                "\nPrice: %.5f" +
-                "\nATR Value: %.5f" +
-                "\nATR Stop Distance: %.5f" +
-                "\nEmergency Stop Distance: %.5f" +
-                "\nMinimum Stop Distance: %.5f",
-                m_symbolInfo.GetSymbol(),
-                currentPrice,
-                atrValue,
-                atrStopDistance,
-                emergencyStopDistance,
-                minStopDistance
-            ));
+    Logger.Debug(StringFormat(
+        "Stop Distance Calculations:" +
+        "\nSymbol: %s" +
+        "\nPrice: %.5f" +
+        "\nRegular Stop Distance: %.5f" +
+        "\nEmergency Stop Distance: %.5f" +
+        "\nFinal Stop Distance: %.5f",
+        m_symbolInfo.GetSymbol(),
+        currentPrice,
+        regularStopDistance,
+        emergencyStopDistance,
+        finalStopDistance
+    ));
 
-           // Use the most conservative stop and log which one was chosen
-           double stopDistance = MathMin(atrStopDistance, emergencyStopDistance);
-           string stopType;
-
-           if(stopDistance == atrStopDistance) {
-               stopType = "ATR";
-           } else {
-               stopType = "Emergency";
-           }
-
-           stopDistance = MathMax(stopDistance, minStopDistance);
-           if(stopDistance == minStopDistance) {
-               stopType = "Fixed";
-           }
-
-           Logger.Debug(StringFormat(
-               "Final Stop Distance Selected:" +
-               "\nType: %s" +
-               "\nDistance: %.5f" +
-               "\nFinal Stop Price: %.5f",
-               stopType,
-               stopDistance,
-               orderType == OP_BUY ? currentPrice - stopDistance : currentPrice + stopDistance
-           ));
-
-           return stopDistance;
-       }
+    return finalStopDistance;
+}
 
     bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
                            double tp, string comment) {
