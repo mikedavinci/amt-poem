@@ -22,8 +22,50 @@ private:
     double          m_maxAccountRisk;   // Maximum total account risk
     double          m_marginBuffer;     // Margin safety buffer (percentage)
 
+
+ bool ValidateRiskLevels(double positionRisk, string context = "") {  
+        double accountBalance = AccountBalance();
+        if(accountBalance <= 0) {
+            Logger.Error("Invalid account balance");
+            return false;
+        }
+
+        double riskPercent = (positionRisk / accountBalance) * 100;
+        double totalRisk = CalculateTotalAccountRisk() + positionRisk;
+        double totalRiskPercent = (totalRisk / accountBalance) * 100;
+
+        Logger.Debug(StringFormat(
+            "Risk Validation [%s]:" +
+            "\nPosition Risk: %.2f%%" +
+            "\nTotal Risk: %.2f%%" +
+            "\nRisk Limit: %.2f%%" +
+            "\nTotal Risk Limit: %.2f%%",
+            context,
+            riskPercent,
+            totalRiskPercent,
+            m_riskPercent,
+            m_maxAccountRisk
+        ));
+
+        // Check position risk
+        if(riskPercent > m_riskPercent) {
+            Logger.Warning(StringFormat("[%s] Position risk %.2f%% exceeds limit %.2f%%",
+                          context, riskPercent, m_riskPercent));
+            return false;
+        }
+
+        // Check total account risk
+        if(totalRiskPercent > m_maxAccountRisk) {
+            Logger.Warning(StringFormat("[%s] Total account risk %.2f%% exceeds limit %.2f%%",
+                          context, totalRiskPercent, m_maxAccountRisk));
+            return false;
+        }
+
+        return true;
+    }
+
 public:
-    // Calculate monetary risk for a position
+// Calculate monetary risk for a position
 double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
     if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) return 0;
     
@@ -85,7 +127,7 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
         return (freeMargin / (marginRequirement * safetyBuffer));
     }
 
-public:
+
     // Constructor
     CRiskManager(CSymbolInfo* symbolInfo, double riskPercent = DEFAULT_RISK_PERCENT,
                      double maxAccountRisk = DEFAULT_RISK_PERCENT * 3,
@@ -137,7 +179,7 @@ public:
         }
     
     // Calculate position size based on risk parameters
-  double CalculatePositionSize(double entryPrice, double stopLoss) {
+double CalculatePositionSize(double entryPrice, double stopLoss, int orderType) { 
       // Initial parameter validation with detailed logging
       if(entryPrice <= 0 || stopLoss <= 0) {
           Logger.Error(StringFormat("Invalid input parameters - Entry: %.5f, StopLoss: %.5f",
@@ -311,57 +353,15 @@ public:
           lotSize, minLot, maxLot, lotStep, finalLotSize
       ));
 
-      return finalLotSize;
+       // When validating the final position size
+    if(!ValidatePositionRisk(finalLotSize, entryPrice, stopLoss, orderType)) {
+        Logger.Warning("Final lot size exceeds risk parameters - reducing to minimum");
+        return minLot;
+    }
+
+    return finalLotSize;
   }
     
-    // Validate risk levels for a potential position
-    bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss) {
-        if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
-                Logger.Error(StringFormat(
-                    "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
-                    lots, entryPrice, stopLoss
-                ));
-                return false;
-            }
-
-        double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss);
-        double accountBalance = AccountBalance();
-
-        if(accountBalance <= 0) {
-                Logger.Error("Invalid account balance");
-                return false;
-            }
-
-        double riskPercent = (positionRisk / accountBalance) * 100;
-
-        // Log risk calculations
-            Logger.Debug(StringFormat(
-                "Risk Calculation:" +
-                "\nPosition Risk: %.2f" +
-                "\nAccount Balance: %.2f" +
-                "\nRisk Percent: %.2f%%",
-                positionRisk, accountBalance, riskPercent
-            ));
-        
-        // Check position risk
-        if(riskPercent > m_riskPercent) {
-            Logger.Warning(StringFormat("Position risk %.2f%% exceeds limit %.2f%%", 
-                          riskPercent, m_riskPercent));
-            return false;
-        }
-        
-        // Check total account risk
-        double totalRisk = CalculateTotalAccountRisk() + positionRisk;
-        double totalRiskPercent = (totalRisk / accountBalance) * 100;
-        
-        if(totalRiskPercent > m_maxAccountRisk) {
-            Logger.Warning(StringFormat("Total account risk %.2f%% exceeds limit %.2f%%", 
-                          totalRiskPercent, m_maxAccountRisk));
-            return false;
-        }
-        
-        return true;
-    }
     
     // Calculate total account risk from all open positions
 double CalculateTotalAccountRisk() {
@@ -395,28 +395,42 @@ double CalculateTotalAccountRisk() {
     return totalRisk;
 }
 
-bool ValidateNewPosition(double lots, double entryPrice, double stopLoss, int orderType) {
-    // Count existing positions
-    int existingPositions = 0;
-    for(int i = 0; i < OrdersTotal(); i++) {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                existingPositions++;
+
+bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
+        if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
+            Logger.Error(StringFormat(
+                "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
+                lots, entryPrice, stopLoss
+            ));
+            return false;
+        }
+
+        double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss, orderType);
+        return ValidateRiskLevels(positionRisk, "Position Risk");
+    }
+
+    bool ValidateNewPosition(double lots, double entryPrice, double stopLoss, int orderType) {
+        // Count existing positions first
+        int existingPositions = 0;
+        for(int i = 0; i < OrdersTotal(); i++) {
+            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    existingPositions++;
+                }
             }
         }
+
+        if(existingPositions >= MAX_POSITIONS_PER_SYMBOL) {
+            Logger.Warning(StringFormat(
+                "Maximum positions (%d) already reached for %s",
+                MAX_POSITIONS_PER_SYMBOL,
+                m_symbolInfo.GetSymbol()
+            ));
+            return false;
+        }
+
+        return ValidatePositionRisk(lots, entryPrice, stopLoss, orderType);
     }
-    
-    if(existingPositions >= MAX_POSITIONS_PER_SYMBOL) {
-        Logger.Warning(StringFormat(
-            "Maximum positions (%d) already reached for %s",
-            MAX_POSITIONS_PER_SYMBOL,
-            m_symbolInfo.GetSymbol()
-        ));
-        return false;
-    }
-    
-    return ValidatePositionRisk(lots, entryPrice, stopLoss);
-}
     
     // Check margin level safety
     bool IsMarginSafe() {

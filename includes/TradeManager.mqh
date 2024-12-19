@@ -163,6 +163,21 @@ private:
 
      //Logger.Debug(StringFormat("ExecuteMarketOrder - Received comment: '%s'", comment));
 
+     if(!m_riskManager.ValidateNewPosition(lots, currentPrice, sl, type)) {
+        Logger.Warning(StringFormat(
+            "Order rejected - Risk validation failed:" +
+            "\nDirection: %s" +
+            "\nLots: %.2f" +
+            "\nPrice: %.5f" +
+            "\nStop Loss: %.5f",
+            type == OP_BUY ? "BUY" : "SELL",
+            lots,
+            currentPrice,
+            sl
+        ));
+        return false;
+    }
+
         int ticket = -1;
         int attempts = 0;
         bool success = false;
@@ -516,24 +531,23 @@ public:
     }
 
     bool OpenSellPosition(double lots, double sl, double tp = 0, string comment = "") {
-         if(!CanTrade()) return false;
+    if(!CanTrade()) return false;
     
-    Logger.Debug(StringFormat(
-        "Buy Position Request:" +
-        "\nAwaiting Opposite: %s" +
-        "\nLast Closed Direction: %s",
-        m_awaitingOppositeSignal ? "Yes" : "No",
-        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
-    ));
-
-
-        if(!CanOpenNewPosition(SIGNAL_BUY)) {
-        Logger.Warning(StringFormat(
-            "Buy position rejected - Awaiting opposite signal after %s position stop loss",
+        Logger.Debug(StringFormat(
+            "Sell Position Request:" +   // Fixed from "Buy" to "Sell"
+            "\nAwaiting Opposite: %s" +
+            "\nLast Closed Direction: %s",
+            m_awaitingOppositeSignal ? "Yes" : "No",
             m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
         ));
-        return false;
-    }
+
+        if(!CanOpenNewPosition(SIGNAL_SELL)) {  // Fixed from SIGNAL_BUY to SIGNAL_SELL
+            Logger.Warning(StringFormat(
+                "Sell position rejected - Awaiting opposite signal after %s position stop loss",  // Fixed message
+                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+            ));
+            return false;
+        }
 
         // Check for existing sell position
         if(HasOpenPositionInDirection(SIGNAL_SELL)) {
@@ -625,22 +639,26 @@ public:
             double currentLots = OrderLots();
             double openPrice = OrderOpenPrice();
             double currentSL = OrderStopLoss();
+            int orderType = OrderType();
 
-            // Calculate current and proposed risk
-            double currentRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, currentSL);
-            double proposedRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, sl);
+             // Calculate current and proposed risk with orderType
+            double currentRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, currentSL, orderType);
+            double proposedRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, sl, orderType);
             double accountBalance = AccountBalance();
+
 
             // Log risk change details
             Logger.Debug(StringFormat(
                 "Stop Loss Modification Risk Analysis:" +
                 "\nTicket: %d" +
+                "\nDirection: %s" +           
                 "\nCurrent Risk: %.2f%%" +
                 "\nProposed Risk: %.2f%%" +
                 "\nCurrent SL: %.5f" +
                 "\nProposed SL: %.5f" +
                 "\nLots: %.2f",
                 ticket,
+                orderType == OP_BUY ? "BUY" : "SELL",  
                 (currentRisk/accountBalance) * 100,
                 (proposedRisk/accountBalance) * 100,
                 currentSL,
@@ -649,13 +667,15 @@ public:
             ));
 
             // Validate new stop loss against risk parameters
-            if(!m_riskManager.ValidatePositionRisk(currentLots, openPrice, sl)) {
+            if(!m_riskManager.ValidateNewPosition(currentLots, openPrice, sl, orderType)) {  // Use ValidateNewPosition instead
                 Logger.Warning(StringFormat(
                     "Stop loss modification rejected - Risk limits exceeded:" +
                     "\nTicket: %d" +
+                    "\nDirection: %s" +      
                     "\nCurrent Risk: %.2f%%" +
                     "\nRejected Risk: %.2f%%",
                     ticket,
+                    orderType == OP_BUY ? "BUY" : "SELL",  
                     (currentRisk/accountBalance) * 100,
                     (proposedRisk/accountBalance) * 100
                 ));
@@ -670,11 +690,13 @@ public:
                 Logger.Info(StringFormat(
                     "Position modified successfully:" +
                     "\nTicket: %d" +
+                    "\nDirection: %s" +       
                     "\nOld SL: %.5f" +
                     "\nNew SL: %.5f" +
                     "\nNew Position Risk: %.2f%%" +
                     "\nTotal Account Risk: %.2f%%",
                     ticket,
+                    orderType == OP_BUY ? "BUY" : "SELL", 
                     currentSL,
                     sl,
                     (proposedRisk/accountBalance) * 100,
