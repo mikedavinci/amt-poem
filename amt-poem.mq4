@@ -234,18 +234,47 @@ bool IsTimeToCheck() {
 }
 
 void ProcessSignals() {
-
     string response = FetchSignals();
     if(response == "") return;
 
     SignalData signal;
     if(ParseSignal(response, signal)) {
         if(ValidateSignal(signal)) {
-            // Set instrument type based on symbol
-            signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
-                INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
+            if(signal.isExitSignal) {
+                ProcessExitSignal(signal);
+            } else {
+                // Set instrument type based on symbol
+                signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
+                    INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
+                ExecuteSignal(signal);
+            }
+        }
+    }
+}
 
-            ExecuteSignal(signal);
+void ProcessExitSignal(const SignalData& signal) {
+    // Find all positions for this symbol
+    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == signal.ticker) {
+                bool shouldClose = false;
+                
+                // Check if exit signal matches position direction
+                if(OrderType() == OP_BUY && signal.exitType == EXIT_BEARISH) {
+                    shouldClose = true;
+                    Logger.Debug("Closing BUY position on Bearish Exit signal");
+                }
+                else if(OrderType() == OP_SELL && signal.exitType == EXIT_BULLISH) {
+                    shouldClose = true;
+                    Logger.Debug("Closing SELL position on Bullish Exit signal");
+                }
+                
+                if(shouldClose) {
+                    g_tradeManager.ClosePosition(OrderTicket(), 
+                        StringFormat("Exit Signal: %s", 
+                            signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
+                }
+            }
         }
     }
 }
@@ -666,12 +695,23 @@ bool ParseSignal(string response, SignalData &signal) {
         //Logger.Debug("Parsed timestamp: " + TimeToString(signal.timestamp));
     }
 
-    // Parse pattern (signalPattern)
+     // Parse pattern (signalPattern)
     if(StringFind(signalStr, "\"signalPattern\":\"") >= 0) {
         int start = StringFind(signalStr, "\"signalPattern\":\"") + 16;
         int end = StringFind(signalStr, "\"", start);
         pattern = StringSubstr(signalStr, start, end - start);
-        //Logger.Debug("Parsed pattern: " + pattern);
+        
+        // Check for exit signals
+        if(StringFind(pattern, "ExitsBearish Exit") >= 0) {
+            signal.isExitSignal = true;
+            signal.exitType = EXIT_BEARISH;
+            Logger.Debug("Detected Bearish Exit Signal");
+        }
+        else if(StringFind(pattern, "ExitsBullish Exit") >= 0) {
+            signal.isExitSignal = true;
+            signal.exitType = EXIT_BULLISH;
+            Logger.Debug("Detected Bullish Exit Signal");
+        }
     }
 
    // Set signal type with explicit validation and logging

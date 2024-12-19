@@ -13,6 +13,12 @@ enum ENUM_INSTRUMENT_TYPE {
     INSTRUMENT_CRYPTO
 };
 
+enum ENUM_EXIT_TYPE {
+    EXIT_NONE = 0,
+    EXIT_BEARISH = 1,
+    EXIT_BULLISH = 2
+};
+
 
 // Enum definitions
 enum ENUM_TRADE_SIGNAL {
@@ -33,7 +39,9 @@ enum ENUM_CLOSE_REASON {
     CLOSE_TP,
     CLOSE_MANUAL,
     CLOSE_EMERGENCY,
-    CLOSE_PROFIT_PROTECTION
+    CLOSE_PROFIT_PROTECTION,
+    CLOSE_EXIT_SIGNAL,        
+    CLOSE_OPPOSITE_SIGNAL    
 };
 
 // Signal Data Structure
@@ -44,11 +52,15 @@ struct SignalData {
     datetime          timestamp;      // Signal timestamp
     string            pattern;        // Trading pattern
     ENUM_INSTRUMENT_TYPE instrumentType; // Forex or Crypto
+    ENUM_EXIT_TYPE exitType;
+    bool isExitSignal; 
 
     // Constructor
     SignalData() : ticker(""), signal(SIGNAL_NEUTRAL), price(0),
-                  timestamp(0), pattern(""),
-                  instrumentType(INSTRUMENT_FOREX) {}
+                   timestamp(0), pattern(""), 
+                   instrumentType(INSTRUMENT_FOREX),
+                   exitType(EXIT_NONE),
+                   isExitSignal(false) {}
 };
 
 // Trade Record Structure
