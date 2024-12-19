@@ -24,29 +24,40 @@ private:
 
 public:
     // Calculate monetary risk for a position
-    double CalculatePositionRisk(double lots, double entryPrice, double stopLoss) {
-        if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) return 0;
+double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
+    if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) return 0;
+    
+    double stopDistance = MathAbs(entryPrice - stopLoss);
+    
+    // Log risk calculation details
+    Logger.Debug(StringFormat(
+        "Calculating Position Risk:" +
+        "\nDirection: %s" +
+        "\nLots: %.2f" +
+        "\nEntry: %.5f" +
+        "\nStop Loss: %.5f" +
+        "\nStop Distance: %.5f",
+        orderType == OP_BUY ? "BUY" : "SELL",
+        lots, entryPrice, stopLoss, stopDistance
+    ));
+    
+    double riskAmount;
+    if(m_symbolInfo.IsCryptoPair()) {
+        riskAmount = stopDistance * lots * m_symbolInfo.GetContractSize();
+    } else {
+        double tickValue = MarketInfo(m_symbolInfo.GetSymbol(), MODE_TICKVALUE);
+        double point = m_symbolInfo.GetPoint();
         
-        double stopDistance = MathAbs(entryPrice - stopLoss);
-        
-        if(m_symbolInfo.IsCryptoPair()) {
-            // Crypto risk calculation
-            return stopDistance * lots * m_symbolInfo.GetContractSize();
-        } else {
-            // Forex risk calculation
-            double tickValue = MarketInfo(m_symbolInfo.GetSymbol(), MODE_TICKVALUE);
-            double point = m_symbolInfo.GetPoint();
-
-            // Add validation
-            if(point <= 0) {
-                Logger.Error("Invalid point value");
-                return 0;
-            }
-
-
-            return (stopDistance / point) * tickValue * lots;
+        if(point <= 0) {
+            Logger.Error("Invalid point value");
+            return 0;
         }
+        
+        riskAmount = (stopDistance / point) * tickValue * lots;
     }
+    
+    return riskAmount;
+}
     
     // Calculate maximum position value based on margin
     double CalculateMaxPositionValue() {
@@ -353,20 +364,59 @@ public:
     }
     
     // Calculate total account risk from all open positions
-    double CalculateTotalAccountRisk() {
-        double totalRisk = 0;
-        
-        for(int i = 0; i < OrdersTotal(); i++) {
-            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                if(OrderStopLoss() != 0) {
-                    totalRisk += CalculatePositionRisk(OrderLots(), 
-                                OrderOpenPrice(), OrderStopLoss());
-                }
+double CalculateTotalAccountRisk() {
+    double totalRisk = 0;
+    int positions = 0;
+    
+    for(int i = 0; i < OrdersTotal(); i++) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol() && OrderStopLoss() != 0) {
+                positions++;
+                double posRisk = CalculatePositionRisk(OrderLots(), 
+                                OrderOpenPrice(), OrderStopLoss(), OrderType());
+                totalRisk += posRisk;
+                
+                Logger.Debug(StringFormat(
+                    "Position Risk Details [%d]:" +
+                    "\nDirection: %s" +
+                    "\nLots: %.2f" +
+                    "\nRisk Amount: %.2f" +
+                    "\nRunning Total: %.2f",
+                    positions,
+                    OrderType() == OP_BUY ? "BUY" : "SELL",
+                    OrderLots(),
+                    posRisk,
+                    totalRisk
+                ));
             }
         }
-        
-        return totalRisk;
     }
+    
+    return totalRisk;
+}
+
+bool ValidateNewPosition(double lots, double entryPrice, double stopLoss, int orderType) {
+    // Count existing positions
+    int existingPositions = 0;
+    for(int i = 0; i < OrdersTotal(); i++) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                existingPositions++;
+            }
+        }
+    }
+    
+    if(existingPositions >= MAX_POSITIONS_PER_SYMBOL) {
+        Logger.Warning(StringFormat(
+            "Maximum positions (%d) already reached for %s",
+            MAX_POSITIONS_PER_SYMBOL,
+            m_symbolInfo.GetSymbol()
+        ));
+        return false;
+    }
+    
+    return ValidatePositionRisk(lots, entryPrice, stopLoss);
+}
     
     // Check margin level safety
     bool IsMarginSafe() {
