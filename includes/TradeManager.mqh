@@ -463,6 +463,7 @@ bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
             if(reason == "TP") return CLOSE_TP;
             if(reason == "EMERGENCY") return CLOSE_EMERGENCY;
             if(reason == "PROFIT_PROTECTION") return CLOSE_PROFIT_PROTECTION;
+            if(StringFind(reason, "Exit Signal") >= 0) return CLOSE_EXIT_SIGNAL;  
             return CLOSE_MANUAL;
         }
 

@@ -38,17 +38,17 @@
 #define EMERGENCY_CLOSE_PERCENT    3
 
 // Regular Stops
-#define FOREX_STOP_PIPS           60
-#define CRYPTO_STOP_PERCENT       5.0
+#define FOREX_STOP_PIPS           100
+#define CRYPTO_STOP_PERCENT       8.0
 
 // Emergency Stops
-#define FOREX_EMERGENCY_PIPS      75
-#define CRYPTO_EMERGENCY_STOP_PERCENT 7.0
+#define FOREX_EMERGENCY_PIPS      125
+#define CRYPTO_EMERGENCY_STOP_PERCENT 10.0
 
 // ATR-based Stops
 #define ATR_PERIOD               14      // Period for ATR calculation
-#define FOREX_ATR_MULTIPLIER     1.5     // Multiplier for forex pairs
-#define CRYPTO_ATR_MULTIPLIER    2.0     // Higher multiplier for crypto due to volatility
+#define FOREX_ATR_MULTIPLIER     2.0     // Multiplier for forex pairs
+#define CRYPTO_ATR_MULTIPLIER    2.5     // Higher multiplier for crypto due to volatility
 
 // BREAKEVEN settings for Forex
 #define FOREX_BREAKEVEN_PROFIT_PIPS   10    // Pips of profit before breakeven

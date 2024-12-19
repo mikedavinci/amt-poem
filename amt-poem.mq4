@@ -773,9 +773,10 @@ bool ParseSignal(string response, SignalData &signal) {
 void CheckProfitProtection(const PositionMetrics &metrics) {
     if(metrics.totalPositions == 0) return;
 
-    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+      for(int i = OrdersTotal() - 1; i >= 0; i--) {
         if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == Symbol()) {
+            if(OrderSymbol() == Symbol() && 
+               StringFind(OrderComment(), "Exit Signal") == -1) { 
                 double currentPrice = OrderType() == OP_BUY ?
                                     g_symbolInfo.GetBid() : g_symbolInfo.GetAsk();
                 double openPrice = OrderOpenPrice();
