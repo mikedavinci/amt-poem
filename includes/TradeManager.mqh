@@ -33,16 +33,16 @@ private:
         if(!m_awaitingOppositeSignal) return true;
 
         Logger.Debug(StringFormat(
-            "Signal Validation After Stop Loss:" +
-            "\nLast Closed Direction: %s" +
-            "\nNew Signal Direction: %s" +
-            "\nAwaiting Opposite Signal: %s",
-            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+            "Validating new position:" +
+            "\nNew Signal: %s" +
+            "\nLast Closed: %s" +
+            "\nAwaiting Opposite: %s",
             newSignal == SIGNAL_BUY ? "BUY" : "SELL",
+            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
             m_awaitingOppositeSignal ? "Yes" : "No"
         ));
 
-        // If awaiting opposite signal, only allow if signal is opposite to last closed position
+        // Only allow if signal is opposite to last closed position
         if(m_lastClosedDirection == SIGNAL_BUY && newSignal == SIGNAL_SELL) {
             m_awaitingOppositeSignal = false;
             Logger.Info("Opposite signal (SELL) received after BUY stop loss - allowing trade");
@@ -55,7 +55,7 @@ private:
         }
 
         Logger.Warning(StringFormat(
-            "Trade rejected - Awaiting %s signal after stop loss hit on %s position",
+            "Trade rejected - Awaiting %s signal after %s position stop loss",
             m_lastClosedDirection == SIGNAL_BUY ? "SELL" : "BUY",
             m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
         ));
@@ -261,16 +261,31 @@ private:
 
 bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
         if(m_symbolInfo.IsCryptoPair()) {
-            double emergencyDistance = openPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
-            if(orderType == OP_BUY && (currentPrice < openPrice - emergencyDistance)) {
-                return true;
-            }
-            if(orderType == OP_SELL && (currentPrice > openPrice + emergencyDistance)) {
-                return true;
-            }
+        double emergencyDistance = openPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+        bool stopHit = false;
+
+        if(orderType == OP_BUY && (currentPrice < openPrice - emergencyDistance)) {
+            stopHit = true;
         }
-        return false;
+        if(orderType == OP_SELL && (currentPrice > openPrice + emergencyDistance)) {
+            stopHit = true;
+        }
+
+        if(stopHit) {
+            Logger.Warning(StringFormat(
+                "Emergency stop triggered:" +
+                "\nDirection: %s" +
+                "\nOpen Price: %.5f" +
+                "\nCurrent Price: %.5f" +
+                "\nEmergency Distance: %.5f",
+                orderType == OP_BUY ? "BUY" : "SELL",
+                openPrice, currentPrice, emergencyDistance
+            ));
+        }
+        return stopHit;
     }
+    return false;
+}
 
     bool CheckBreakevenCondition(double currentPrice, double openPrice,
                                double currentStop, int orderType) {
@@ -459,7 +474,23 @@ public:
     // Trade Execution Methods
     bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
         if(!CanTrade()) return false;
-        if(!CanOpenNewPosition(SIGNAL_BUY)) return false;
+
+        Logger.Debug(StringFormat(
+            "Buy Position Request:" +
+            "\nAwaiting Opposite: %s" +
+            "\nLast Closed Direction: %s",
+            m_awaitingOppositeSignal ? "Yes" : "No",
+            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+        ));
+
+
+        if(!CanOpenNewPosition(SIGNAL_BUY)) {
+                Logger.Warning(StringFormat(
+                    "Buy position rejected - Awaiting opposite signal after %s position stop loss",
+                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+                ));
+                return false;
+            }
 
         // Check for existing buy position
         if(HasOpenPositionInDirection(SIGNAL_BUY)) {
@@ -485,8 +516,24 @@ public:
     }
 
     bool OpenSellPosition(double lots, double sl, double tp = 0, string comment = "") {
-        if(!CanTrade()) return false;
-        if(!CanOpenNewPosition(SIGNAL_SELL)) return false;
+         if(!CanTrade()) return false;
+    
+    Logger.Debug(StringFormat(
+        "Buy Position Request:" +
+        "\nAwaiting Opposite: %s" +
+        "\nLast Closed Direction: %s",
+        m_awaitingOppositeSignal ? "Yes" : "No",
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+    ));
+
+
+        if(!CanOpenNewPosition(SIGNAL_BUY)) {
+        Logger.Warning(StringFormat(
+            "Buy position rejected - Awaiting opposite signal after %s position stop loss",
+            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+        ));
+        return false;
+    }
 
         // Check for existing sell position
         if(HasOpenPositionInDirection(SIGNAL_SELL)) {
@@ -512,33 +559,60 @@ public:
     }
 
     bool ClosePosition(int ticket, string reason = "") {
-        if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
-            LogTradeError("Order select failed", GetLastError());
-            return false;
-        }
-
-        double lots = OrderLots();
-        double price = OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
-
-        bool success = OrderClose(ticket, lots, price, m_slippage, clrRed);
-        if(success) {
-            m_lastTrade.closePrice = price;
-            m_lastTrade.closeTime = TimeCurrent();
-            m_lastTrade.closeReason = StringToCloseReason(reason);
-            m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
-
-            // Set awaiting flag if closed by stop loss or trailing stop
-            if(reason == "SL" || StringFind(reason, "trailing") >= 0) {
-                m_awaitingOppositeSignal = true;
-                m_lastClosedDirection = OrderType() == OP_BUY ? SIGNAL_BUY : SIGNAL_SELL;
-                Logger.Info("Position closed by stop/trailing stop - awaiting opposite signal");
-            }
-        } else {
-            LogTradeError("Order close failed", GetLastError());
-        }
-
-        return success;
+    if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
+        LogTradeError("Order select failed", GetLastError());
+        return false;
     }
+
+    // Store position details before closing
+    ENUM_TRADE_SIGNAL currentDirection = OrderType() == OP_BUY ? SIGNAL_BUY : SIGNAL_SELL;
+    double openPrice = OrderOpenPrice();
+    double stopLoss = OrderStopLoss();
+    double closePrice = OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+    
+    Logger.Info(StringFormat(
+        "Attempting to close position:" +
+        "\nTicket: %d" +
+        "\nReason: %s" +
+        "\nDirection: %s" +
+        "\nOpen Price: %.5f" +
+        "\nStop Loss: %.5f" +
+        "\nClose Price: %.5f",
+        ticket, reason,
+        currentDirection == SIGNAL_BUY ? "BUY" : "SELL",
+        openPrice, stopLoss, closePrice
+    ));
+
+    bool success = OrderClose(ticket, OrderLots(), closePrice, m_slippage, clrRed);
+    
+    if(success) {
+        m_lastTrade.closePrice = closePrice;
+        m_lastTrade.closeTime = TimeCurrent();
+        m_lastTrade.closeReason = StringToCloseReason(reason);
+        m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
+
+        // Set awaiting flag for SL and trailing stop
+        if(reason == "SL" || reason == "EMERGENCY" || StringFind(reason, "trailing") >= 0) {
+            m_awaitingOppositeSignal = true;
+            m_lastClosedDirection = currentDirection;
+            Logger.Info(StringFormat(
+                "Stop loss hit - Awaiting opposite signal:" +
+                "\nClosed Direction: %s" +
+                "\nEntry: %.5f" +
+                "\nStop Loss: %.5f" +
+                "\nClose Price: %.5f" +
+                "\nP/L: %.2f",
+                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+                openPrice, stopLoss, closePrice,
+                m_lastTrade.profit
+            ));
+        }
+    } else {
+        LogTradeError("Order close failed", GetLastError());
+    }
+
+    return success;
+}
 
     // Position Modification Methods
         bool ModifyPosition(int ticket, double sl, double tp = 0) {
