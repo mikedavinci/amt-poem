@@ -31,19 +31,19 @@
 #define CRYPTO_MARGIN_PERCENT_LTC   0.01     // 1.0%
 
 // Risk Management Constants
-#define DEFAULT_RISK_PERCENT        1.0
+#define DEFAULT_RISK_PERCENT        1.0  
 #define MAX_POSITIONS_PER_SYMBOL    1
 #define MAX_RETRY_ATTEMPTS          3
 #define DEFAULT_SLIPPAGE           5
 #define EMERGENCY_CLOSE_PERCENT    3
 
 // Regular Stops
-#define FOREX_STOP_PIPS           50
-#define CRYPTO_STOP_PERCENT       3.0
+#define FOREX_STOP_PIPS           60
+#define CRYPTO_STOP_PERCENT       5.0
 
 // Emergency Stops
 #define FOREX_EMERGENCY_PIPS      75
-#define CRYPTO_EMERGENCY_STOP_PERCENT 5.0
+#define CRYPTO_EMERGENCY_STOP_PERCENT 7.0
 
 // ATR-based Stops
 #define ATR_PERIOD               14      // Period for ATR calculation
@@ -51,11 +51,11 @@
 #define CRYPTO_ATR_MULTIPLIER    2.0     // Higher multiplier for crypto due to volatility
 
 // BREAKEVEN settings for Forex
-#define FOREX_BREAKEVEN_PROFIT_PIPS   30    // Pips of profit before breakeven
+#define FOREX_BREAKEVEN_PROFIT_PIPS   10    // Pips of profit before breakeven
 #define FOREX_BREAKEVEN_BUFFER_PIPS   5     // Buffer pips above entry price
 
 // BREAKEVEN settings for Crypto
-#define CRYPTO_BREAKEVEN_PROFIT_PERCENT 2.0  // Percentage of profit before breakeven (1%)
+#define CRYPTO_BREAKEVEN_PROFIT_PERCENT 1.0  // Percentage of profit before breakeven (1%)
 #define CRYPTO_BREAKEVEN_BUFFER_PERCENT 0.5  // Buffer percentage above entry price (0.1%)
 
 // Profit Protection Settings
@@ -75,9 +75,9 @@
 
 // API Settings
 #define API_TIMEOUT             5000      // 5000ms (5 seconds) timeout for API calls
-#define API_RETRY_INTERVAL      1000      // 1 second between retries
+#define API_RETRY_INTERVAL      5000      // 5 second between retries
 #define INITIAL_RETRY_DELAY     100       // 100ms initial delay
-#define MAX_RETRY_DELAY         1000      // 1 second maximum delay
+#define MAX_RETRY_DELAY         5000      // 5 seconds maximum delay
 #define SIGNAL_CHECK_INTERVAL    3600    // Check signals every hour (3600 seconds)
 #define RISK_CHECK_INTERVAL        300    // Check risk every 5 minutes
 

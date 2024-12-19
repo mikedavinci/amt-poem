@@ -163,7 +163,23 @@ private:
 
      //Logger.Debug(StringFormat("ExecuteMarketOrder - Received comment: '%s'", comment));
 
-     if(!m_riskManager.ValidateNewPosition(lots, currentPrice, sl, type)) {
+        int ticket = -1;
+        int attempts = 0;
+        bool success = false;
+
+        // Ensure comment is not NULL
+            if(comment == NULL) comment = "";
+
+            // Ensure the comment doesn't exceed the maximum length (31 characters)
+            if(StringLen(comment) > 31) {
+                comment = StringSubstr(comment, 0, 31);
+            }
+
+                // Get current price before validation
+    double currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
+
+    // Add risk validation
+    if(!m_riskManager.ValidateNewPosition(lots, currentPrice, sl, type)) {
         Logger.Warning(StringFormat(
             "Order rejected - Risk validation failed:" +
             "\nDirection: %s" +
@@ -178,26 +194,15 @@ private:
         return false;
     }
 
-        int ticket = -1;
-        int attempts = 0;
-        bool success = false;
-
-        // Ensure comment is not NULL
-            if(comment == NULL) comment = "";
-
-            // Ensure the comment doesn't exceed the maximum length (31 characters)
-            if(StringLen(comment) > 31) {
-                comment = StringSubstr(comment, 0, 31);
-            }
-
         while(attempts < m_maxRetries && !success) {
             if(attempts > 0) {
                 RefreshRates();
                 int delay = MathMin(INITIAL_RETRY_DELAY * (attempts + 1), MAX_RETRY_DELAY);
                 Sleep(delay);
+                // Update current price after refresh
+                currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
             }
 
-            double currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
 
              // Log attempt details
                     //Logger.Debug(StringFormat(

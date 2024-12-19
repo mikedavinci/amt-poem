@@ -25,7 +25,7 @@ extern string SYSTEM_NAME = "EA-TradeJourney";                                  
 extern string TIMEFRAME = "60";                                               // Timeframe parameter
 
 // Risk Management
-extern double RISK_PERCENT = 1.0;                    // Risk percentage per trade
+extern double RISK_PERCENT = 2.0;                    // Risk percentage per trade
 extern double MARGIN_BUFFER = 50.0;                  // Margin buffer percentage
 extern bool ENABLE_PROFIT_PROTECTION = true;         // Enable profit protection
 extern double MAX_ACCOUNT_RISK = 3.0;               // Maximum total account risk
@@ -447,7 +447,7 @@ void ExecuteSignal(const SignalData& signal) {
     g_riskManager.SetRiskPercent(riskPercent);
     Logger.Debug(StringFormat("Using Risk Percent: %.2f%%", riskPercent));
 
-    double lots = g_riskManager.CalculatePositionSize(signal.price, stopLoss);
+    double lots = g_riskManager.CalculatePositionSize(signal.price, stopLoss, orderType);
     Logger.Debug(StringFormat("Calculated Position Size: %.2f lots", lots));
 
     if(lots <= 0) {
