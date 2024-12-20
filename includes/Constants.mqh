@@ -38,11 +38,11 @@
 #define EMERGENCY_CLOSE_PERCENT    3
 
 // Regular Stops
-#define FOREX_STOP_PIPS           100
+#define FOREX_STOP_PIPS           80
 #define CRYPTO_STOP_PERCENT       8.0
 
 // Emergency Stops
-#define FOREX_EMERGENCY_PIPS      125
+#define FOREX_EMERGENCY_PIPS      120
 #define CRYPTO_EMERGENCY_STOP_PERCENT 10.0
 
 // ATR-based Stops

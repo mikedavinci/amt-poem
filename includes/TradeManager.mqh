@@ -89,42 +89,62 @@ private:
         return true;
     }
 
-// Private Methods for Trade Operations
-    double GetCoordinatedStopDistance(double currentPrice, int orderType) {
-    // Calculate regular stop distance
+double GetCoordinatedStopDistance(double currentPrice, double entryPrice, int orderType) {
+    // Calculate regular stop distance from entry price
     double regularStopDistance;
     if(m_symbolInfo.IsCryptoPair()) {
-        regularStopDistance = currentPrice * (CRYPTO_STOP_PERCENT / 100.0);
+        regularStopDistance = entryPrice * (CRYPTO_STOP_PERCENT / 100.0);
         Logger.Debug(StringFormat("Regular Crypto Stop: %.2f%%", CRYPTO_STOP_PERCENT));
     } else {
         regularStopDistance = FOREX_STOP_PIPS * m_symbolInfo.GetPipSize();
         Logger.Debug(StringFormat("Regular Forex Stop: %d pips", FOREX_STOP_PIPS));
     }
 
-    // Calculate emergency stop distance
+    // Calculate emergency stop distance from entry price
     double emergencyStopDistance;
     if(m_symbolInfo.IsCryptoPair()) {
-        emergencyStopDistance = currentPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+        emergencyStopDistance = entryPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
         Logger.Debug(StringFormat("Emergency Crypto Stop: %.2f%%", CRYPTO_EMERGENCY_STOP_PERCENT));
     } else {
         emergencyStopDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
         Logger.Debug(StringFormat("Emergency Forex Stop: %d pips", FOREX_EMERGENCY_PIPS));
     }
 
-    // Use regular stop distance but never exceed emergency distance
-    double finalStopDistance = MathMin(regularStopDistance, emergencyStopDistance);
+    // Use regular stop distance unless emergency is triggered
+    double finalStopDistance = regularStopDistance;
+
+    // Check if price has moved against us significantly
+    bool emergencyCondition = false;
+    if(orderType == OP_BUY) {
+        if(currentPrice < entryPrice - regularStopDistance) {
+            emergencyCondition = true;
+        }
+    } else {
+        if(currentPrice > entryPrice + regularStopDistance) {
+            emergencyCondition = true;
+        }
+    }
+
+    // Only use emergency distance if conditions warrant it
+    if(emergencyCondition) {
+        finalStopDistance = emergencyStopDistance;
+    }
 
     Logger.Debug(StringFormat(
         "Stop Distance Calculations:" +
         "\nSymbol: %s" +
-        "\nPrice: %.5f" +
+        "\nEntry Price: %.5f" +
+        "\nCurrent Price: %.5f" +
         "\nRegular Stop Distance: %.5f" +
         "\nEmergency Stop Distance: %.5f" +
+        "\nEmergency Condition: %s" +
         "\nFinal Stop Distance: %.5f",
         m_symbolInfo.GetSymbol(),
+        entryPrice,
         currentPrice,
         regularStopDistance,
         emergencyStopDistance,
+        emergencyCondition ? "Yes" : "No",
         finalStopDistance
     ));
 
@@ -190,7 +210,7 @@ private:
             }
 
             // Calculate ATR-based stop loss and emergency stops
-            double stopDistance = GetCoordinatedStopDistance(currentPrice, type);
+            double stopDistance = GetCoordinatedStopDistance(currentPrice, OrderOpenPrice(), OrderType());
             double newStopLoss = type == OP_BUY ?
                 currentPrice - stopDistance :
                 currentPrice + stopDistance;
@@ -300,63 +320,36 @@ bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
         }
     }
 
-    void CheckTrailingStop() {
-        if(!HasOpenPosition()) return;
 
-        for(int i = OrdersTotal() - 1; i >= 0; i--) {
-            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                    double currentPrice = OrderType() == OP_BUY ?
-                        m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+   void CheckTrailingStop() {
+    if(!HasOpenPosition()) return;
 
-                    // First check emergency stop
-                    if(CheckEmergencyStop(currentPrice, OrderOpenPrice(), OrderType())) {
-                        ClosePosition(OrderTicket(), "EMERGENCY");
-                        continue;
-                    }
+    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                double currentPrice = OrderType() == OP_BUY ?
+                    m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+                double openPrice = OrderOpenPrice();
 
-                    // Check breakeven condition
-                    if(CheckBreakevenCondition(currentPrice, OrderOpenPrice(),
-                       OrderStopLoss(), OrderType())) {
-                        double breakevenStop = OrderOpenPrice();
-                        if(m_symbolInfo.IsCryptoPair()) {
-                            // Add buffer for crypto based on percentage
-                            if(OrderType() == OP_BUY) {
-                                breakevenStop *= (1 + CRYPTO_BREAKEVEN_BUFFER_PERCENT/100.0);
-                            } else {
-                                breakevenStop *= (1 - CRYPTO_BREAKEVEN_BUFFER_PERCENT/100.0);
-                            }
-                        } else {
-                            // Add buffer for forex based on pips
-                            if(OrderType() == OP_BUY) {
-                                breakevenStop += m_symbolInfo.GetPipSize() * FOREX_BREAKEVEN_BUFFER_PIPS;
-                            } else {
-                                breakevenStop -= m_symbolInfo.GetPipSize() * FOREX_BREAKEVEN_BUFFER_PIPS;
-                            }
-                        }
+                // First check emergency stop
+                if(CheckEmergencyStop(currentPrice, openPrice, OrderType())) {
+                    ClosePosition(OrderTicket(), "EMERGENCY");
+                    continue;
+                }
 
-                        ModifyPosition(OrderTicket(), breakevenStop);
-                        continue;  // Skip trailing stop if we moved to breakeven
-                    }
+                // Only set initial stop loss if none exists
+                if(OrderStopLoss() == 0) {
+                double stopDistance = GetCoordinatedStopDistance(currentPrice, OrderOpenPrice(), OrderType());
+                    double initialStopLoss = OrderType() == OP_BUY ?
+                        openPrice - stopDistance :
+                        openPrice + stopDistance;
 
-                    // Get coordinated stop distance for trailing
-                    double stopDistance = GetCoordinatedStopDistance(currentPrice, OrderType());
-                    double newStopLoss = OrderType() == OP_BUY ?
-                        currentPrice - stopDistance :
-                        currentPrice + stopDistance;
-
-                    // Move stop loss if better than current
-                    if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
-                        ModifyPosition(OrderTicket(), newStopLoss);
-                    }
-                    else if(OrderType() == OP_SELL &&
-                            (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
-                        ModifyPosition(OrderTicket(), newStopLoss);
-                    }
+                    ModifyPosition(OrderTicket(), initialStopLoss);
                 }
             }
         }
     }
+}
 
     void RecordTrade(int ticket, int type, double lots, double price,
                          double sl, double tp, string comment) {
@@ -608,85 +601,132 @@ public:
 }
 
     // Position Modification Methods
-        bool ModifyPosition(int ticket, double sl, double tp = 0) {
-            if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
-                LogTradeError("Order select failed", GetLastError());
-                return false;
-            }
+bool ModifyPosition(int ticket, double sl, double tp = 0) {
+    if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
+        LogTradeError("Order select failed", GetLastError());
+        return false;
+    }
 
-            // Get current position details
-            double currentLots = OrderLots();
-            double openPrice = OrderOpenPrice();
-            double currentSL = OrderStopLoss();
-            int orderType = OrderType();
+    // Get current position details
+    double currentLots = OrderLots();
+    double openPrice = OrderOpenPrice();
+    double currentSL = OrderStopLoss();
+    int orderType = OrderType();
+    double currentPrice = orderType == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
 
-             // Calculate current and proposed risk with orderType
-            double currentRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, currentSL, orderType);
-            double proposedRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, sl, orderType);
-            double accountBalance = AccountBalance();
+    // Check if position is in profit
+    bool isInProfit = (orderType == OP_BUY && currentPrice > openPrice) ||
+                     (orderType == OP_SELL && currentPrice < openPrice);
 
+    // Check if new stop loss is protective
+    bool isProtectiveStop = false;
+    if(isInProfit) {
+        if(orderType == OP_BUY) {
+            isProtectiveStop = sl >= openPrice;  // Correctly checks if SL locks in profit
+        } else {
+            isProtectiveStop = sl <= openPrice;  // Correctly checks if SL locks in profit
+        }
+    }
 
-            // Log risk change details
-            Logger.Debug(StringFormat(
-                "Stop Loss Modification Risk Analysis:" +
+    double currentProfit = OrderProfit() + OrderSwap() + OrderCommission();
+
+    // Log the modification attempt details
+    Logger.Debug(StringFormat(
+        "Stop Loss Modification Analysis:" +
+        "\nTicket: %d" +
+        "\nDirection: %s" +
+        "\nOpen Price: %.5f" +
+        "\nCurrent Price: %.5f" +
+        "\nCurrent SL: %.5f" +
+        "\nProposed SL: %.5f" +
+        "\nIn Profit: %s" +
+        "\nProtective Stop: %s" +
+        "\nCurrent Profit: %.2f",
+        ticket,
+        orderType == OP_BUY ? "BUY" : "SELL",
+        openPrice,
+        currentPrice,
+        currentSL,
+        sl,
+        isInProfit ? "Yes" : "No",
+        isProtectiveStop ? "Yes" : "No",
+        currentProfit
+    ));
+
+    // Skip risk validation for protective stops
+    if(!isProtectiveStop) {
+        double currentRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, currentSL, orderType);
+        double proposedRisk = m_riskManager.CalculatePositionRisk(currentLots, openPrice, sl, orderType);
+        double accountBalance = AccountBalance();
+
+        if(!m_riskManager.ValidatePositionRisk(currentLots, openPrice, sl, orderType)) {
+            Logger.Warning(StringFormat(
+                "Stop loss modification rejected - Risk limits exceeded:" +
                 "\nTicket: %d" +
-                "\nDirection: %s" +           
+                "\nDirection: %s" +      
                 "\nCurrent Risk: %.2f%%" +
-                "\nProposed Risk: %.2f%%" +
-                "\nCurrent SL: %.5f" +
-                "\nProposed SL: %.5f" +
-                "\nLots: %.2f",
+                "\nRejected Risk: %.2f%%",
                 ticket,
                 orderType == OP_BUY ? "BUY" : "SELL",  
                 (currentRisk/accountBalance) * 100,
-                (proposedRisk/accountBalance) * 100,
+                (proposedRisk/accountBalance) * 100
+            ));
+            return false;
+        }
+    }
+
+    // Proceed with modification
+    bool success = OrderModify(ticket, openPrice, sl, tp, 0);
+
+    if(success) {
+        if(isProtectiveStop) {
+            double lockedProfitPips = orderType == OP_BUY ? 
+            (sl - openPrice) / m_symbolInfo.GetPipSize() :
+            (openPrice - sl) / m_symbolInfo.GetPipSize();
+
+            Logger.Info(StringFormat(
+                "Protective stop modification successful:" +
+                "\nTicket: %d" +
+                "\nDirection: %s" +       
+                "\nEntry Price: %.5f" +
+                "\nOld SL: %.5f" +
+                "\nNew SL: %.5f" +
+                "\nCurrent Price: %.5f" +
+                "\nLocked Profit Pips: %.1f",
+                ticket,
+                orderType == OP_BUY ? "BUY" : "SELL", 
+                openPrice,
                 currentSL,
                 sl,
-                currentLots
+                currentPrice,
+                lockedProfitPips
             ));
+        } else {
+            double totalAccountRisk = m_riskManager.CalculateTotalAccountRisk();
+            double accountBalance = AccountBalance();
 
-            // Validate new stop loss against risk parameters
-            if(!m_riskManager.ValidateNewPosition(currentLots, openPrice, sl, orderType)) {  // Use ValidateNewPosition instead
-                Logger.Warning(StringFormat(
-                    "Stop loss modification rejected - Risk limits exceeded:" +
-                    "\nTicket: %d" +
-                    "\nDirection: %s" +      
-                    "\nCurrent Risk: %.2f%%" +
-                    "\nRejected Risk: %.2f%%",
-                    ticket,
-                    orderType == OP_BUY ? "BUY" : "SELL",  
-                    (currentRisk/accountBalance) * 100,
-                    (proposedRisk/accountBalance) * 100
-                ));
-                return false;
-            }
-
-            // Proceed with modification
-            bool success = OrderModify(ticket, openPrice, sl, tp, 0);
-
-            if(success) {
-                double totalAccountRisk = m_riskManager.CalculateTotalAccountRisk();
-                Logger.Info(StringFormat(
-                    "Position modified successfully:" +
-                    "\nTicket: %d" +
-                    "\nDirection: %s" +       
-                    "\nOld SL: %.5f" +
-                    "\nNew SL: %.5f" +
-                    "\nNew Position Risk: %.2f%%" +
-                    "\nTotal Account Risk: %.2f%%",
-                    ticket,
-                    orderType == OP_BUY ? "BUY" : "SELL", 
-                    currentSL,
-                    sl,
-                    (proposedRisk/accountBalance) * 100,
-                    (totalAccountRisk/accountBalance) * 100
-                ));
-            } else {
-                LogTradeError("Order modify failed", GetLastError());
-            }
-
-            return success;
+            Logger.Info(StringFormat(
+                "Position modified successfully:" +
+                "\nTicket: %d" +
+                "\nDirection: %s" +       
+                "\nOld SL: %.5f" +
+                "\nNew SL: %.5f" +
+                "\nNew Position Risk: %.2f%%" +
+                "\nTotal Account Risk: %.2f%%",
+                ticket,
+                orderType == OP_BUY ? "BUY" : "SELL", 
+                currentSL,
+                sl,
+                (m_riskManager.CalculatePositionRisk(currentLots, openPrice, sl, orderType)/accountBalance) * 100,
+                (totalAccountRisk/accountBalance) * 100
+            ));
         }
+    } else {
+        LogTradeError("Order modify failed", GetLastError());
+    }
+
+    return success;
+}
 
         // Position Information Methods
         bool HasOpenPosition() {

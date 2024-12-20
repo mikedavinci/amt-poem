@@ -397,17 +397,61 @@ double CalculateTotalAccountRisk() {
 
 
 bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
-        if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
-            Logger.Error(StringFormat(
-                "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
-                lots, entryPrice, stopLoss
-            ));
-            return false;
-        }
-
-        double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss, orderType);
-        return ValidateRiskLevels(positionRisk, "Position Risk");
+    if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
+        Logger.Error(StringFormat(
+            "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
+            lots, entryPrice, stopLoss
+        ));
+        return false;
     }
+
+    // Get current market price
+    double currentPrice = orderType == OP_BUY ? 
+        m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+    // Check if we're in profit
+    bool isInProfit = (orderType == OP_BUY && currentPrice > entryPrice) ||
+                     (orderType == OP_SELL && currentPrice < entryPrice);
+
+    // Log position details
+    Logger.Debug(StringFormat(
+        "Position Details:" +
+        "\nDirection: %s" +
+        "\nEntry Price: %.5f" +
+        "\nCurrent Price: %.5f" +
+        "\nStop Loss: %.5f" +
+        "\nIn Profit: %s",
+        orderType == OP_BUY ? "BUY" : "SELL",
+        entryPrice,
+        currentPrice,
+        stopLoss,
+        isInProfit ? "Yes" : "No"
+    ));
+
+    // If in profit, check if stop loss is protective
+    if(isInProfit) {
+        // For BUY positions
+        if(orderType == OP_BUY) {
+            // Allow if stop is at or above entry (locking profits)
+            if(stopLoss >= entryPrice) {
+                Logger.Debug("Allowing protective stop for profitable BUY position");
+                return true;
+            }
+        }
+        // For SELL positions
+        else if(orderType == OP_SELL) {
+            // Allow if stop is at or below entry (locking profits)
+            if(stopLoss <= entryPrice) {
+                Logger.Debug("Allowing protective stop for profitable SELL position");
+                return true;
+            }
+        }
+    }
+
+    // If not a protective stop, calculate and validate risk
+    double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss, orderType);
+    return ValidateRiskLevels(positionRisk, "Position Risk");
+}
 
     bool ValidateNewPosition(double lots, double entryPrice, double stopLoss, int orderType) {
         // Count existing positions first

@@ -326,3 +326,78 @@ Copy1. EURUSD BUY position hits stop loss
 
 
 This system helps prevent consecutive losses in the same direction and ensures the EA waits for a potential trend reversal before re-entering a position.
+
+
+
+
+THIS CHECKTRAILINGSTOP Icludes trailing stop logic which will continue to adjust the stop loss based on current price
+
+    void CheckTrailingStop() {
+    if(!HasOpenPosition()) return;
+
+    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                double currentPrice = OrderType() == OP_BUY ?
+                    m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+                double openPrice = OrderOpenPrice();
+
+                // First check emergency stop
+                if(CheckEmergencyStop(currentPrice, openPrice, OrderType())) {
+                    ClosePosition(OrderTicket(), "EMERGENCY");
+                    continue;
+                }
+
+                // If there's no stop loss set, set it from entry price
+                if(OrderStopLoss() == 0) {
+                    // Calculate stop loss from entry price
+                    double stopDistance = GetCoordinatedStopDistance(currentPrice, openPrice, OrderType());
+                    double newStopLoss = OrderType() == OP_BUY ?
+                        openPrice - stopDistance :
+                        openPrice + stopDistance;
+
+                    ModifyPosition(OrderTicket(), newStopLoss);
+                }
+
+                    // Check breakeven condition
+                    if(CheckBreakevenCondition(currentPrice, OrderOpenPrice(),
+                       OrderStopLoss(), OrderType())) {
+                        double breakevenStop = OrderOpenPrice();
+                        if(m_symbolInfo.IsCryptoPair()) {
+                            // Add buffer for crypto based on percentage
+                            if(OrderType() == OP_BUY) {
+                                breakevenStop *= (1 + CRYPTO_BREAKEVEN_BUFFER_PERCENT/100.0);
+                            } else {
+                                breakevenStop *= (1 - CRYPTO_BREAKEVEN_BUFFER_PERCENT/100.0);
+                            }
+                        } else {
+                            // Add buffer for forex based on pips
+                            if(OrderType() == OP_BUY) {
+                                breakevenStop += m_symbolInfo.GetPipSize() * FOREX_BREAKEVEN_BUFFER_PIPS;
+                            } else {
+                                breakevenStop -= m_symbolInfo.GetPipSize() * FOREX_BREAKEVEN_BUFFER_PIPS;
+                            }
+                        }
+
+                        ModifyPosition(OrderTicket(), breakevenStop);
+                        continue;  // Skip trailing stop if we moved to breakeven
+                    }
+
+                    // Get coordinated stop distance for trailing
+                    double stopDistance = GetCoordinatedStopDistance(currentPrice, OrderOpenPrice(), OrderType());
+                    double newStopLoss = OrderType() == OP_BUY ?
+                        currentPrice - stopDistance :
+                        currentPrice + stopDistance;
+
+                    // Move stop loss if better than current
+                    if(OrderType() == OP_BUY && newStopLoss > OrderStopLoss()) {
+                        ModifyPosition(OrderTicket(), newStopLoss);
+                    }
+                    else if(OrderType() == OP_SELL &&
+                            (OrderStopLoss() == 0 || newStopLoss < OrderStopLoss())) {
+                        ModifyPosition(OrderTicket(), newStopLoss);
+                    }
+                }
+            }
+        }
+    }
