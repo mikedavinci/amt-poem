@@ -588,6 +588,81 @@ string FetchSignals() {
     return response;
 }
 
+//+------------------------------------------------------------------+
+//| Parse timestamp string to datetime                                 |
+//+------------------------------------------------------------------+
+datetime ParseTimestamp(string rawTimestamp, bool &success) {
+    success = false;
+    string timestampStr = rawTimestamp;
+    
+    // Clean the timestamp string
+    StringReplace(timestampStr, "\"", ""); // Remove all quotes
+    timestampStr = StringTrimRight(StringTrimLeft(timestampStr));
+    
+    // Early validation
+    if(StringLen(timestampStr) < 19) { // Minimum length for MM/DD/YYYY HH:MM:SS
+        Logger.Error("Timestamp too short: " + timestampStr);
+        return 0;
+    }
+    
+    // Extract date components
+    int month = (int)StringToInteger(StringSubstr(timestampStr, 0, 2));
+    int day = (int)StringToInteger(StringSubstr(timestampStr, 3, 2));
+    int year = (int)StringToInteger(StringSubstr(timestampStr, 6, 4));
+    
+    // Extract time components
+    int hour = (int)StringToInteger(StringSubstr(timestampStr, 11, 2));
+    int minute = (int)StringToInteger(StringSubstr(timestampStr, 14, 2));
+    int second = 0;
+    
+    // Check for seconds
+    if(StringLen(timestampStr) >= 19) {
+        second = (int)StringToInteger(StringSubstr(timestampStr, 17, 2));
+    }
+    
+    // Check for AM/PM
+    bool isPM = StringFind(timestampStr, "PM") >= 0;
+    bool isAM = StringFind(timestampStr, "AM") >= 0;
+    
+    // Adjust hour for 12-hour format
+    if(isPM && hour < 12) hour += 12;
+    if(isAM && hour == 12) hour = 0;
+    
+    // Validate all components
+    if(month < 1 || month > 12 || 
+       day < 1 || day > 31 || 
+       year < 2024 || 
+       hour < 0 || hour > 23 || 
+       minute < 0 || minute > 59 || 
+       second < 0 || second > 59) {
+        Logger.Error(StringFormat(
+            "Invalid date components - M:%d D:%d Y:%d H:%d M:%d S:%d",
+            month, day, year, hour, minute, second)
+        );
+        return 0;
+    }
+    
+    // Create formatted datetime string
+    string formattedDateTime = StringFormat("%04d.%02d.%02d %02d:%02d:%02d",
+        year, month, day, hour, minute, second);
+    
+    // Convert to datetime
+    datetime result = StringToTime(formattedDateTime);
+    
+    if(result > 0) {
+        success = true;
+        Logger.Debug(StringFormat(
+            "Timestamp parsed successfully:" +
+            "\nInput: %s" +
+            "\nParsed: %s",
+            timestampStr,
+            TimeToString(result, TIME_DATE|TIME_SECONDS)
+        ));
+    }
+    
+    return result;
+}
+
 
 //+------------------------------------------------------------------+
 //| Parse signal from API response                                     |
@@ -610,9 +685,6 @@ bool ParseSignal(string response, SignalData &signal) {
     signal.price = 0;
     signal.ticker = "";
     signal.pattern = "";
-
-    // Attempt to parse JSON response
-    bool parseSuccess = false;
 
     // Extract first signal from array if present
     string signalStr = response;
@@ -654,16 +726,14 @@ bool ParseSignal(string response, SignalData &signal) {
         }
         action = StringSubstr(signalStr, start, end - start);
 
-        // Remove quotes from both ends if they exist
+        // Clean up the action string
+        action = StringTrimRight(StringTrimLeft(action));
         if(StringGetCharacter(action, 0) == '"') {
             action = StringSubstr(action, 1);
         }
         if(StringGetCharacter(action, StringLen(action)-1) == '"') {
             action = StringSubstr(action, 0, StringLen(action)-1);
         }
-
-        // Clean up the action string
-        action = StringTrimRight(StringTrimLeft(action));
 
         // Convert and compare
         action = ConvertToUpper(action);
@@ -684,71 +754,35 @@ bool ParseSignal(string response, SignalData &signal) {
         Logger.Debug(StringFormat("Parsed price: %.5f", price));
     }
 
-    // Parse timestamp
+    // Parse timestamp using new helper function
     if(StringFind(signalStr, "\"timestamp\":\"") >= 0) {
         int start = StringFind(signalStr, "\"timestamp\":\"") + 12;
-        int end = StringFind(signalStr, "\"", start);
+        int end = StringFind(signalStr, "\",\"", start);
+        if(end == -1) end = StringFind(signalStr, "\"}", start);
+        
         if(end == -1) {
             Logger.Error("Malformed timestamp field in signal");
             return false;
         }
+        
         string timestampStr = StringSubstr(signalStr, start, end - start);
         Logger.Debug("Raw timestamp string: " + timestampStr);
-
-        // Validate timestamp format
-        if(StringLen(timestampStr) < 19) { // "MM/DD/YYYY HH:MM:SS PM" minimum length
-            Logger.Error("Invalid timestamp format: " + timestampStr);
+        
+        bool parseSuccess = false;
+        signal.timestamp = ParseTimestamp(timestampStr, parseSuccess);
+        
+        if(!parseSuccess || signal.timestamp == 0) {
+            Logger.Error("Failed to parse timestamp: " + timestampStr);
             return false;
         }
-
-        // Parse MM/DD/YYYY HH:MM:SS PM format
-        int month = (int)StringToInteger(StringSubstr(timestampStr, 0, 2));
-        int day = (int)StringToInteger(StringSubstr(timestampStr, 3, 2));
-        int year = (int)StringToInteger(StringSubstr(timestampStr, 6, 4));
-        int hour = (int)StringToInteger(StringSubstr(timestampStr, 11, 2));
-        int minute = (int)StringToInteger(StringSubstr(timestampStr, 14, 2));
-
-        // Debug parsed components
-        Logger.Debug(StringFormat(
-            "Parsed date components:" +
-            "\nMonth: %d" +
-            "\nDay: %d" +
-            "\nYear: %d" +
-            "\nHour: %d" +
-            "\nMinute: %d",
-            month, day, year, hour, minute
-        ));
-
-        // Validate date components
-        if(month < 1 || month > 12 || day < 1 || day > 31 || 
-           year < 2024 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-            Logger.Error("Invalid date components");
-            return false;
-        }
-
-        // Adjust for PM correctly
-        bool isPM = StringFind(timestampStr, "PM") >= 0;
-        if(isPM && hour < 12) hour += 12;
-        if(!isPM && hour == 12) hour = 0;  // Handle 12 AM case
-
-        // Create timestamp and debug it
-        string formattedDateTime = StringFormat("%04d.%02d.%02d %02d:%02d:00",
-                                              year, month, day, hour, minute);
-        Logger.Debug("Formatted datetime string: " + formattedDateTime);
         
-        signal.timestamp = StringToTime(formattedDateTime);
-        
-        // Compare with last timestamp
-        Logger.Debug(StringFormat(
-            "Timestamp comparison:" +
-            "\nNew timestamp: %s" +
-            "\nLast timestamp: %s",
-            TimeToString(signal.timestamp),
-            TimeToString(g_lastSignalTimestamp)
-        ));
-
-        if(signal.timestamp == 0) {
-            Logger.Error("Failed to convert timestamp");
+        // Check for duplicate signal
+        if(signal.timestamp <= g_lastSignalTimestamp) {
+            Logger.Debug(StringFormat(
+                "Duplicate or old signal - Current: %s, Last: %s",
+                TimeToString(signal.timestamp),
+                TimeToString(g_lastSignalTimestamp)
+            ));
             return false;
         }
     }
@@ -778,8 +812,6 @@ bool ParseSignal(string response, SignalData &signal) {
     }
 
     // Set signal type with explicit validation and logging
-    Logger.Debug(StringFormat("Processing action: '%s'", action));
-
     if(action == "SELL") {
         signal.signal = SIGNAL_SELL;
         Logger.Debug("Signal set to SELL");
@@ -793,24 +825,13 @@ bool ParseSignal(string response, SignalData &signal) {
         return false;
     }
 
-    // Validate all required fields
+    // Final validation
     bool validSignal = (ticker != "" && action != "" && price > 0 && signal.timestamp > 0);
-    Logger.Debug(StringFormat(
-        "Signal validation:" +
-        "\nTicker: %s" +
-        "\nAction: %s" +
-        "\nPrice: %.5f" +
-        "\nTimestamp: %s" +
-        "\nValid: %s",
-        ticker, action, price, TimeToString(signal.timestamp), 
-        validSignal ? "true" : "false"
-    ));
-
+    
     if(validSignal) {
         signal.ticker = ticker;
         signal.price = price;
         signal.pattern = pattern;
-        parseSuccess = true;
 
         Logger.Info(StringFormat(
             "Successfully parsed signal:" +
@@ -842,7 +863,7 @@ bool ParseSignal(string response, SignalData &signal) {
         ));
     }
 
-    return parseSuccess;
+    return validSignal;
 }
 
 
