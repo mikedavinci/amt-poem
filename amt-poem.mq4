@@ -16,6 +16,7 @@
 #include "../Include/RiskManager.mqh"
 #include "../Include/SessionManager.mqh"
 #include "../Include/Logger.mqh"
+#include "../Include/CTradeJourney.mqh"
 
 // External Parameters
 // API Configuration
@@ -47,6 +48,8 @@ CRiskManager* g_riskManager = NULL;
 CSessionManager* g_sessionManager = NULL;
 datetime g_lastCheck = 0;
 datetime g_lastSignalTimestamp = 0;
+string m_currentSymbol;
+CTradeJourney* g_tradeJourney = NULL;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -58,63 +61,12 @@ int OnInit() {
     Logger.SetSystemName(SYSTEM_NAME);
     Logger.SetPapertrailHost(PAPERTRAIL_HOST);
 
-    // Log initialization start
-    Logger.Info(StringFormat("Initializing %s EA...", SYSTEM_NAME));
-
-    // Initialize symbol info first
-    g_symbolInfo = new CSymbolInfo(_Symbol);
-    if(g_symbolInfo == NULL) {
-        Logger.Error("Failed to initialize SymbolInfo");
+    // Create and initialize trade journey instance
+    g_tradeJourney = new CTradeJourney();
+    if(!g_tradeJourney.Initialize()) {
+        Logger.Error("Failed to initialize EA");
         return INIT_FAILED;
     }
-
-    // Initialize RiskManager before TradeManager
-    g_riskManager = new CRiskManager(g_symbolInfo, RISK_PERCENT, MAX_ACCOUNT_RISK, MARGIN_BUFFER);
-    if(g_riskManager == NULL) {
-        Logger.Error("Failed to initialize RiskManager");
-        return INIT_FAILED;
-    }
-
-    // Now initialize TradeManager with the initialized RiskManager
-    g_tradeManager = new CTradeManager(g_symbolInfo, g_riskManager, DEFAULT_SLIPPAGE, MAX_RETRY_ATTEMPTS);
-    if(g_tradeManager == NULL) {
-        Logger.Error("Failed to initialize TradeManager");
-        return INIT_FAILED;
-    }
-
-    g_sessionManager = new CSessionManager(g_symbolInfo,
-                                         TRADE_ASIAN_SESSION,
-                                         TRADE_LONDON_SESSION,
-                                         TRADE_NEWYORK_SESSION,
-                                         ALLOW_SESSION_OVERLAP);
-    if(g_sessionManager == NULL) {
-        Logger.Error("Failed to initialize SessionManager");
-        return INIT_FAILED;
-    }
-
-    // Log initialization parameters
-    Logger.Info(StringFormat(
-        "EA Initialized with:" +
-        "\nRisk: %.2f%%" +
-        "\nMargin Buffer: %.2f%%" +
-        "\nMax Account Risk: %.2f%%" +
-        "\nProfit Protection: %s",
-        RISK_PERCENT,
-        MARGIN_BUFFER,
-        MAX_ACCOUNT_RISK,
-        ENABLE_PROFIT_PROTECTION ? "Enabled" : "Disabled"
-    ));
-
-    // Log account information
-    Logger.Info(StringFormat(
-        "Account Status:" +
-        "\nBalance: %.2f" +
-        "\nEquity: %.2f" +
-        "\nMargin Level: %.2f%%",
-        AccountBalance(),
-        AccountEquity(),
-        AccountMargin() > 0 ? (AccountEquity() / AccountMargin() * 100) : 0
-    ));
 
     return INIT_SUCCEEDED;
 }
@@ -123,27 +75,10 @@ int OnInit() {
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-    // Clean up allocated resources
-    if(g_symbolInfo != NULL) {
-        delete g_symbolInfo;
-        g_symbolInfo = NULL;
+    if(g_tradeJourney != NULL) {
+        delete g_tradeJourney;
+        g_tradeJourney = NULL;
     }
-
-    if(g_tradeManager != NULL) {
-        delete g_tradeManager;
-        g_tradeManager = NULL;
-    }
-
-    if(g_riskManager != NULL) {
-        delete g_riskManager;
-        g_riskManager = NULL;
-    }
-
-    if(g_sessionManager != NULL) {
-        delete g_sessionManager;
-        g_sessionManager = NULL;
-    }
-
     Logger.Info(StringFormat("EA Deinitialized. Reason: %d", reason));
 }
 
@@ -151,182 +86,11 @@ void OnDeinit(const int reason) {
 //| Expert tick function                                              |
 //+------------------------------------------------------------------+
 void OnTick() {
-    // Skip if managers aren't initialized
-    if(g_symbolInfo == NULL || g_tradeManager == NULL ||
-       g_riskManager == NULL || g_sessionManager == NULL) {
-        return;
-    }
-
-    // Check if trading is allowed
-    if(!g_tradeManager.CanTrade()) {
-        static datetime lastWarning = 0;
-        if(TimeCurrent() - lastWarning >= 300) {  // Log every 5 minutes
-       //     Logger.Warning("Trading not currently allowed");
-            lastWarning = TimeCurrent();
-        }
-        return;
-    }
-
-    // Check market session
-    if(!g_sessionManager.IsMarketOpen()) {
-        return;
-    }
-
-    // Perform periodic checks
-    PerformPeriodicChecks();
-
-      // Check for new signals
-        if(IsTimeToCheck()) {
-            ProcessSignals();
-        }
-
-    // Monitor positions (includes trailing stops and profit protection)
-        if(ENABLE_PROFIT_PROTECTION) {
-            static datetime lastCheck = 0;
-            if(TimeCurrent() - lastCheck >= PROFIT_CHECK_INTERVAL) {
-                g_tradeManager.MonitorPositions();
-                lastCheck = TimeCurrent();
-            }
-        }
-}
-
-//+------------------------------------------------------------------+
-//| Periodic monitoring and maintenance                               |
-//+------------------------------------------------------------------+
-void PerformPeriodicChecks() {
-    static datetime lastCheck = 0;
-    datetime currentTime = TimeCurrent();
-
-    // Run checks every RISK_CHECK_INTERVAL minutes
-    if(currentTime - lastCheck >= RISK_CHECK_INTERVAL) {
-        // Check account status
-        if(!g_riskManager.IsMarginSafe()) {
-            Logger.Warning("Margin level below safe threshold");
-        }
-
-        // Log current market conditions
-        string liquidity = g_sessionManager.GetLiquidityLevel();
-        // Logger.Debug(StringFormat(
-            // "Market Conditions:" +
-            // "\nLiquidity: %s" +
-            // "\nSpread: %.5f",
-            // liquidity,
-            // g_symbolInfo.GetSpread()
-        // ));
-
-        lastCheck = currentTime;
+    if(g_tradeJourney != NULL) {
+        g_tradeJourney.OnTick();
     }
 }
 
-//+------------------------------------------------------------------+
-//| Signal processing                                                 |
-//+------------------------------------------------------------------+
-bool IsTimeToCheck() {
-    static datetime lastSignalCheck = 0;
-    datetime currentTime = TimeCurrent();
-
-    if(currentTime - lastSignalCheck < SIGNAL_CHECK_INTERVAL) {
-        return false;
-    }
-
-    lastSignalCheck = currentTime;
-    return true;
-}
-
-void ProcessSignals() {
-    string response = FetchSignals();
-    if(response == "") return;
-
-    SignalData signal;
-    if(ParseSignal(response, signal)) {
-
-        Logger.Debug(StringFormat(
-            "Processing signal:" +
-            "\nSignal Type: %s" +
-            "\nTime: %s" +
-            "\nPrice: %.5f",
-            signal.signal == SIGNAL_BUY ? "BUY" : 
-            signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
-            TimeToString(signal.timestamp),
-            signal.price
-        ));
-
-        if(ValidateSignal(signal)) {
-            if(signal.isExitSignal) {
-                ProcessExitSignal(signal);
-            } else {
-                // Set instrument type based on symbol
-                signal.instrumentType = g_symbolInfo.IsCryptoPair() ?
-                    INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
-                ExecuteSignal(signal);
-            }
-        }
-    }
-}
-
-void ProcessExitSignal(const SignalData& signal) {
-    // Find all positions for this symbol
-    for(int i = OrdersTotal() - 1; i >= 0; i--) {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == signal.ticker) {
-                bool shouldClose = false;
-                
-                // Check if exit signal matches position direction
-                if(OrderType() == OP_BUY && signal.exitType == EXIT_BEARISH) {
-                    shouldClose = true;
-                    Logger.Debug("Closing BUY position on Bearish Exit signal");
-                }
-                else if(OrderType() == OP_SELL && signal.exitType == EXIT_BULLISH) {
-                    shouldClose = true;
-                    Logger.Debug("Closing SELL position on Bullish Exit signal");
-                }
-                
-                if(shouldClose) {
-                    g_tradeManager.ClosePosition(OrderTicket(), 
-                        StringFormat("Exit Signal: %s", 
-                            signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
-                }
-            }
-        }
-    }
-}
-
-void CloseAllPositions(string reason) {
-    for(int i = OrdersTotal() - 1; i >= 0; i--) {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == Symbol()) {
-                g_tradeManager.ClosePosition(OrderTicket(), reason);
-            }
-        }
-    }
-}
-
-
-
-//+------------------------------------------------------------------+
-//| Position monitoring                                               |
-//+------------------------------------------------------------------+
-void MonitorPositions() {
-    PositionMetrics metrics = g_tradeManager.GetPositionMetrics();
-
-    if(metrics.totalPositions > 0) {
-        // Check profit protection
-        if(ENABLE_PROFIT_PROTECTION) {
-            CheckProfitProtection(metrics);
-        }
-
-        // Log position status
-        Logger.Debug(StringFormat(
-            "Position Status:" +
-            "\nTotal Positions: %d" +
-            "\nTotal Volume: %.2f" +
-            "\nUnrealized P/L: %.2f",
-            metrics.totalPositions,
-            metrics.totalVolume,
-            metrics.unrealizedPL
-        ));
-    }
-}
 
 //+------------------------------------------------------------------+
 //| Get description of the MT4 error code                             |
@@ -432,172 +196,6 @@ string ErrorDescription(int error_code)
       default:   error_string="unknown error";
    }
    return(error_string);
-}
-
-//+------------------------------------------------------------------+
-//| Signal validation and execution                                   |
-//+------------------------------------------------------------------+
-bool ValidateSignal(const SignalData& signal) {
-    // Compare datetime values instead of strings
-        if(signal.timestamp == g_lastSignalTimestamp || signal.timestamp == 0) {
-            Logger.Debug("Duplicate or invalid signal timestamp - skipping");
-            return false;
-        }
-
-        // Validate price
-        if(signal.price <= 0) {
-            Logger.Error("Invalid signal price");
-            return false;
-        }
-
-        // Additional validations as needed
-        return true;
-    }
-
-
-
-void ExecuteSignal(const SignalData& signal) {
-    // Validate signal direction with explicit enum values
-    string signalDirection;
-    switch(signal.signal) {
-        case SIGNAL_BUY:
-            signalDirection = "BUY";
-            Logger.Debug("Signal validated as BUY");
-            break;
-        case SIGNAL_SELL:
-            signalDirection = "SELL";
-            Logger.Debug("Signal validated as SELL");
-            break;
-        default:
-            signalDirection = "NEUTRAL";
-            Logger.Debug("Signal defaulted to NEUTRAL");
-            break;
-    }
-
-    Logger.Debug(StringFormat("Signal details - Enum value: %d, Direction: %s, Price: %.5f",
-                 signal.signal, signalDirection, signal.price));
-
-    // Calculate position size and stop loss
-    int orderType = (signal.signal == SIGNAL_BUY) ? OP_BUY : OP_SELL;
-    double stopLoss = g_symbolInfo.CalculateStopLoss(orderType, signal.price);
-    Logger.Debug(StringFormat("Calculated Stop Loss: %.5f", stopLoss));
-
-    // Use appropriate risk percentage from Constants
-    double riskPercent = g_symbolInfo.IsCryptoPair() ?
-        CRYPTO_STOP_PERCENT : DEFAULT_RISK_PERCENT;
-    g_riskManager.SetRiskPercent(riskPercent);
-    Logger.Debug(StringFormat("Using Risk Percent: %.2f%%", riskPercent));
-
-    double lots = g_riskManager.CalculatePositionSize(signal.price, stopLoss, orderType);
-    Logger.Debug(StringFormat("Calculated Position Size: %.2f lots", lots));
-
-    if(lots <= 0) {
-        Logger.Error(StringFormat("Invalid position size calculated: %.2f", lots));
-        return;
-    }
-
-    // Prepare trade comment with explicit signal information
-    string tradeComment = StringFormat("TJ:%s:%s", signalDirection, signal.pattern);
-    tradeComment = StringSubstr(tradeComment, 0, 31); // Ensure comment doesn't exceed MT4 limit
-    Logger.Debug(StringFormat("Trade comment prepared: '%s'", tradeComment));
-
-    // Execute trade based on explicit signal type
-    bool success = false;
-
-    switch(signal.signal) {
-        case SIGNAL_BUY:
-            Logger.Debug(StringFormat("Executing BUY order - Lots: %.2f, Stop Loss: %.5f", lots, stopLoss));
-            success = g_tradeManager.OpenBuyPosition(lots, stopLoss, 0, tradeComment);
-            break;
-
-        case SIGNAL_SELL:
-            Logger.Debug(StringFormat("Executing SELL order - Lots: %.2f, Stop Loss: %.5f", lots, stopLoss));
-            success = g_tradeManager.OpenSellPosition(lots, stopLoss, 0, tradeComment);
-            break;
-
-        default:
-            Logger.Warning(StringFormat("Invalid signal type (%d) - No trade executed", signal.signal));
-            return;
-    }
-
-    if(success) {
-        g_lastSignalTimestamp = signal.timestamp;
-        Logger.Trade(StringFormat(
-            "Position successfully executed:" +
-            "\nDirection: %s" +
-            "\nLots: %.2f" +
-            "\nEntry: %.5f" +
-            "\nStop Loss: %.5f" +
-            "\nPattern: %s" +
-            "\nSignal Value: %d",
-            signalDirection,
-            lots,
-            signal.price,
-            stopLoss,
-            signal.pattern,
-            signal.signal
-        ));
-    } else {
-        int lastError = GetLastError();
-        Logger.Error(StringFormat("Trade execution failed - Signal: %d, Error: %d - %s",
-                    signal.signal, lastError, ErrorDescription(lastError)));
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Fetch signals from API                                             |
-//+------------------------------------------------------------------+
-string FetchSignals() {
-    // Remove "+" from symbol for API call
-    string symbolBase = Symbol();
-    if(StringFind(symbolBase, "+") >= 0) {
-        symbolBase = StringSubstr(symbolBase, 0, StringFind(symbolBase, "+"));
-    }
-
-    string url = StringFormat("%s?pairs=%s&tf=%s",
-                            API_URL,
-                            symbolBase,  // Use clean symbol name
-                            TIMEFRAME);
-
-    Logger.Debug(StringFormat("Fetching signals from URL: %s", url));
-
-    string headers = "Content-Type: application/json\r\n";
-    char post[];
-    char result[];
-    string resultHeaders;
-
-    // Send API request
-    ResetLastError();
-    int res = WebRequest(
-        "GET",
-        url,
-        headers,
-        API_TIMEOUT,
-        post,
-        result,
-        resultHeaders
-    );
-
-    if(res == -1) {
-        int error = GetLastError();
-        if(error == 4060) {
-            Logger.Error("Add URL to: Tools -> Options -> Expert Advisors -> Allow WebRequest");
-            Logger.Error("URL to allow: " + url);
-        } else {
-            Logger.Error(StringFormat("Failed to fetch signals. Error: %d", error));
-        }
-        return "";
-    }
-
-    string response = CharArrayToString(result);
-    Logger.Debug("API Response: " + response);
-
-    if(StringLen(response) == 0) {
-        Logger.Debug("No signals received");
-        return "";
-    }
-
-    return response;
 }
 
 //+------------------------------------------------------------------+

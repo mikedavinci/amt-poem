@@ -460,6 +460,14 @@ public:
 
     // Trade Execution Methods
     bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
+         // Validate symbol
+        if(m_symbolInfo.GetSymbol() != Symbol()) {
+            Logger.Error(StringFormat(
+                "Symbol mismatch in OpenBuyPosition - Expected: %s, Got: %s",
+                Symbol(), m_symbolInfo.GetSymbol()));
+            return false;
+        }
+
         if(!CanTrade()) return false;
 
         Logger.Debug(StringFormat(
@@ -503,6 +511,15 @@ public:
     }
 
     bool OpenSellPosition(double lots, double sl, double tp = 0, string comment = "") {
+
+        // Validate symbol
+        if(m_symbolInfo.GetSymbol() != Symbol()) {
+            Logger.Error(StringFormat(
+                "Symbol mismatch in OpenSellPosition - Expected: %s, Got: %s",
+                Symbol(), m_symbolInfo.GetSymbol()));
+            return false;
+        }
+
     if(!CanTrade()) return false;
     
         Logger.Debug(StringFormat(
@@ -545,6 +562,13 @@ public:
     }
 
     bool ClosePosition(int ticket, string reason = "") {
+    if(m_symbolInfo.GetSymbol() != Symbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in ClosePosition - Expected: %s, Got: %s",
+            Symbol(), m_symbolInfo.GetSymbol()));
+        return false;
+    }
+
     if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
         LogTradeError("Order select failed", GetLastError());
         return false;
@@ -602,6 +626,15 @@ public:
 
     // Position Modification Methods
 bool ModifyPosition(int ticket, double sl, double tp = 0) {
+
+    // Validate symbol
+        if(m_symbolInfo.GetSymbol() != Symbol()) {
+            Logger.Error(StringFormat(
+                "Symbol mismatch in ModifyPosition - Expected: %s, Got: %s",
+                Symbol(), m_symbolInfo.GetSymbol()));
+            return false;
+        }
+
     if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
         LogTradeError("Order select failed", GetLastError());
         return false;
