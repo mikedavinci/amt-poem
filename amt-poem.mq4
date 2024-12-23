@@ -239,6 +239,18 @@ void ProcessSignals() {
 
     SignalData signal;
     if(ParseSignal(response, signal)) {
+
+        Logger.Debug(StringFormat(
+            "Processing signal:" +
+            "\nSignal Type: %s" +
+            "\nTime: %s" +
+            "\nPrice: %.5f",
+            signal.signal == SIGNAL_BUY ? "BUY" : 
+            signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
+            TimeToString(signal.timestamp),
+            signal.price
+        ));
+
         if(ValidateSignal(signal)) {
             if(signal.isExitSignal) {
                 ProcessExitSignal(signal);
@@ -596,14 +608,10 @@ datetime ParseTimestamp(string rawTimestamp, bool &success) {
     string timestampStr = rawTimestamp;
     
     // Clean the timestamp string
-    StringReplace(timestampStr, "\"", ""); // Remove all quotes
+    StringReplace(timestampStr, "\"", ""); // Remove quotes
     timestampStr = StringTrimRight(StringTrimLeft(timestampStr));
     
-    // Early validation
-    if(StringLen(timestampStr) < 19) { // Minimum length for MM/DD/YYYY HH:MM:SS
-        Logger.Error("Timestamp too short: " + timestampStr);
-        return 0;
-    }
+    Logger.Debug("Parsing timestamp: " + timestampStr);
     
     // Extract date components
     int month = (int)StringToInteger(StringSubstr(timestampStr, 0, 2));
@@ -613,38 +621,23 @@ datetime ParseTimestamp(string rawTimestamp, bool &success) {
     // Extract time components
     int hour = (int)StringToInteger(StringSubstr(timestampStr, 11, 2));
     int minute = (int)StringToInteger(StringSubstr(timestampStr, 14, 2));
-    int second = 0;
+    int second = (int)StringToInteger(StringSubstr(timestampStr, 17, 2));
     
-    // Check for seconds
-    if(StringLen(timestampStr) >= 19) {
-        second = (int)StringToInteger(StringSubstr(timestampStr, 17, 2));
-    }
-    
-    // Check for AM/PM
+    // Handle AM/PM
     bool isPM = StringFind(timestampStr, "PM") >= 0;
-    bool isAM = StringFind(timestampStr, "AM") >= 0;
-    
-    // Adjust hour for 12-hour format
     if(isPM && hour < 12) hour += 12;
-    if(isAM && hour == 12) hour = 0;
     
-    // Validate all components
-    if(month < 1 || month > 12 || 
-       day < 1 || day > 31 || 
-       year < 2024 || 
-       hour < 0 || hour > 23 || 
-       minute < 0 || minute > 59 || 
-       second < 0 || second > 59) {
-        Logger.Error(StringFormat(
-            "Invalid date components - M:%d D:%d Y:%d H:%d M:%d S:%d",
-            month, day, year, hour, minute, second)
-        );
-        return 0;
-    }
+    Logger.Debug(StringFormat(
+        "Timestamp components: Y:%d M:%d D:%d H:%d M:%d S:%d PM:%s",
+        year, month, day, hour, minute, second,
+        isPM ? "Yes" : "No"
+    ));
     
-    // Create formatted datetime string
-    string formattedDateTime = StringFormat("%04d.%02d.%02d %02d:%02d:%02d",
-        year, month, day, hour, minute, second);
+    // Create datetime string in MT4 format (YYYY.MM.DD HH:MM:SS)
+    string formattedDateTime = StringFormat(
+        "%04d.%02d.%02d %02d:%02d:%02d",
+        year, month, day, hour, minute, second
+    );
     
     // Convert to datetime
     datetime result = StringToTime(formattedDateTime);
@@ -652,11 +645,15 @@ datetime ParseTimestamp(string rawTimestamp, bool &success) {
     if(result > 0) {
         success = true;
         Logger.Debug(StringFormat(
-            "Timestamp parsed successfully:" +
-            "\nInput: %s" +
-            "\nParsed: %s",
+            "Successfully parsed timestamp: %s -> %s",
             timestampStr,
-            TimeToString(result, TIME_DATE|TIME_SECONDS)
+            TimeToString(result, TIME_DATE|TIME_MINUTES|TIME_SECONDS)
+        ));
+    } else {
+        Logger.Error(StringFormat(
+            "Failed to parse timestamp: %s -> %s",
+            timestampStr,
+            formattedDateTime
         ));
     }
     
@@ -675,197 +672,124 @@ string ConvertToUpper(string text) {
 }
 
 bool ParseSignal(string response, SignalData &signal) {
-    if(response == "") return false;
-
-    // Initialize signal values
-    signal.timestamp = 0;
+    // Initialize default values
     signal.signal = SIGNAL_NEUTRAL;
-    signal.isExitSignal = false;
-    signal.exitType = EXIT_NONE;
     signal.price = 0;
     signal.ticker = "";
     signal.pattern = "";
 
-    // Extract first signal from array if present
     string signalStr = response;
-    if(StringGetCharacter(response, 0) == '[') {
-        int firstClosingBrace = StringFind(response, "},");
-        if(firstClosingBrace == -1) {
-            Logger.Error("Could not find end of first signal object");
-            return false;
-        }
-        signalStr = StringSubstr(response, 1, firstClosingBrace + 1);
-    }
-
-    Logger.Debug(StringFormat("Extracted signal string (length: %d): %s", StringLen(signalStr), signalStr));
-
-    string ticker = "";
-    string action = "";
-    double price = 0;
-    string pattern = "";
-
-    // Parse ticker (symbol)
-    if(StringFind(signalStr, "\"ticker\":\"") >= 0) {
-        int start = StringFind(signalStr, "\"ticker\":\"") + 9;
-        int end = StringFind(signalStr, "\"", start);
-        if(end == -1) {
-            Logger.Error("Malformed ticker field in signal");
-            return false;
-        }
-        ticker = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Parsed ticker: " + ticker);
-    }
-
-    // Parse action (signal)
-    if(StringFind(signalStr, "\"action\":\"") >= 0) {
-        int start = StringFind(signalStr, "\"action\":\"") + 9;
-        int end = StringFind(signalStr, "\",", start);  // Look for "," after the closing quote
-        if(end == -1) {
-            Logger.Error("Malformed action field in signal");
-            return false;
-        }
-        action = StringSubstr(signalStr, start, end - start);
-
-        // Clean up the action string
-        action = StringTrimRight(StringTrimLeft(action));
-        if(StringGetCharacter(action, 0) == '"') {
-            action = StringSubstr(action, 1);
-        }
-        if(StringGetCharacter(action, StringLen(action)-1) == '"') {
-            action = StringSubstr(action, 0, StringLen(action)-1);
-        }
-
-        // Convert and compare
-        action = ConvertToUpper(action);
-        Logger.Debug(StringFormat("Processed action: '%s'", action));
-    }
-
-    // Parse price
-    if(StringFind(signalStr, "\"price\":") >= 0) {
-        int start = StringFind(signalStr, "\"price\":") + 8;
-        int end = StringFind(signalStr, ",", start);
-        if(end < 0) end = StringFind(signalStr, "}", start);
-        if(end == -1) {
-            Logger.Error("Malformed price field in signal");
-            return false;
-        }
-        string priceStr = StringSubstr(signalStr, start, end - start);
-        price = StringToDouble(priceStr);
-        Logger.Debug(StringFormat("Parsed price: %.5f", price));
-    }
-
-    // Parse timestamp using new helper function
-    if(StringFind(signalStr, "\"timestamp\":\"") >= 0) {
-        int start = StringFind(signalStr, "\"timestamp\":\"") + 12;
-        int end = StringFind(signalStr, "\",\"", start);
-        if(end == -1) end = StringFind(signalStr, "\"}", start);
-        
-        if(end == -1) {
-            Logger.Error("Malformed timestamp field in signal");
-            return false;
-        }
-        
-        string timestampStr = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Raw timestamp string: " + timestampStr);
-        
-        bool parseSuccess = false;
-        signal.timestamp = ParseTimestamp(timestampStr, parseSuccess);
-        
-        if(!parseSuccess || signal.timestamp == 0) {
-            Logger.Error("Failed to parse timestamp: " + timestampStr);
-            return false;
-        }
-        
-        // Check for duplicate signal
-        if(signal.timestamp <= g_lastSignalTimestamp) {
-            Logger.Debug(StringFormat(
-                "Duplicate or old signal - Current: %s, Last: %s",
-                TimeToString(signal.timestamp),
-                TimeToString(g_lastSignalTimestamp)
-            ));
-            return false;
-        }
-    }
-
-    // Parse pattern (signalPattern)
-    if(StringFind(signalStr, "\"signalPattern\":\"") >= 0) {
-        int start = StringFind(signalStr, "\"signalPattern\":\"") + 16;
-        int end = StringFind(signalStr, "\"", start);
-        if(end == -1) {
-            Logger.Error("Malformed pattern field in signal");
-            return false;
-        }
-        pattern = StringSubstr(signalStr, start, end - start);
-        Logger.Debug("Parsed pattern: " + pattern);
-        
-        // Check for exit signals
-        if(StringFind(pattern, "ExitsBearish Exit") >= 0) {
-            signal.isExitSignal = true;
-            signal.exitType = EXIT_BEARISH;
-            Logger.Debug("Detected Bearish Exit Signal");
-        }
-        else if(StringFind(pattern, "ExitsBullish Exit") >= 0) {
-            signal.isExitSignal = true;
-            signal.exitType = EXIT_BULLISH;
-            Logger.Debug("Detected Bullish Exit Signal");
-        }
-    }
-
-    // Set signal type with explicit validation and logging
-    if(action == "SELL") {
-        signal.signal = SIGNAL_SELL;
-        Logger.Debug("Signal set to SELL");
-    }
-    else if(action == "BUY") {
-        signal.signal = SIGNAL_BUY;
-        Logger.Debug("Signal set to BUY");
-    }
-    else {
-        Logger.Error(StringFormat("Invalid action: '%s'", action));
-        return false;
-    }
-
-    // Final validation
-    bool validSignal = (ticker != "" && action != "" && price > 0 && signal.timestamp > 0);
     
-    if(validSignal) {
-        signal.ticker = ticker;
-        signal.price = price;
-        signal.pattern = pattern;
+    // Remove array brackets if present
+    if(StringGetCharacter(response, 0) == '[') {
+        signalStr = StringSubstr(response, 1, StringLen(response) - 2);
+    }
+    
+    Logger.Debug("Processing signal string: " + signalStr);
 
-        Logger.Info(StringFormat(
-            "Successfully parsed signal:" +
-            "\nSymbol: %s" +
-            "\nAction: %s" +
-            "\nPrice: %.5f" +
-            "\nPattern: %s" +
-            "\nTimestamp: %s" +
-            "\nSignal Type: %d" +
-            "\nIs Exit Signal: %s" +
-            "\nExit Type: %d",
-            signal.ticker,
-            action,
-            signal.price,
-            signal.pattern,
-            TimeToString(signal.timestamp),
-            signal.signal,
-            signal.isExitSignal ? "Yes" : "No",
-            signal.exitType
-        ));
-    } else {
-        Logger.Error(StringFormat(
-            "Signal validation failed:" +
-            "\nTicker: %s" +
-            "\nAction: %s" +
-            "\nPrice: %.5f" +
-            "\nTimestamp: %s",
-            ticker, action, price, TimeToString(signal.timestamp)
-        ));
+    // Extract ticker
+    string tickerSearch = "\"ticker\":\"";
+    int tickerPos = StringFind(signalStr, tickerSearch);
+    if(tickerPos != -1) {
+        int startQuote = tickerPos + StringLen(tickerSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            signal.ticker = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+        }
     }
 
+    // Extract action
+    string actionSearch = "\"action\":\"";
+    int actionPos = StringFind(signalStr, actionSearch);
+    if(actionPos != -1) {
+        int startQuote = actionPos + StringLen(actionSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string actionValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            Logger.Debug("Raw action value: " + actionValue);
+            
+            // Clean and compare action
+            if(StringCompare(actionValue, "BUY") == 0) {
+                signal.signal = SIGNAL_BUY;
+                Logger.Debug("Action set to BUY");
+            }
+            else if(StringCompare(actionValue, "SELL") == 0) {
+                signal.signal = SIGNAL_SELL;
+                Logger.Debug("Action set to SELL");
+            }
+        }
+    }
+
+    // Extract price
+    string priceSearch = "\"price\":";
+    int pricePos = StringFind(signalStr, priceSearch);
+    if(pricePos != -1) {
+        int startPrice = pricePos + StringLen(priceSearch);
+        int endPrice = StringFind(signalStr, ",", startPrice);
+        if(endPrice != -1) {
+            string priceStr = StringSubstr(signalStr, startPrice, endPrice - startPrice);
+            signal.price = StringToDouble(priceStr);
+            Logger.Debug(StringFormat("Extracted price: %.5f", signal.price));
+        }
+    }
+
+    string timestampSearch = "\"timestamp\":\"";
+    int timestampPos = StringFind(signalStr, timestampSearch);
+    if(timestampPos != -1) {
+        int startQuote = timestampPos + StringLen(timestampSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string timestampStr = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            bool parseSuccess = false;
+            signal.timestamp = ParseTimestamp(timestampStr, parseSuccess);
+            Logger.Debug(StringFormat("Parsed timestamp: %s -> %s", 
+                timestampStr, 
+                TimeToString(signal.timestamp)));
+
+            if(!parseSuccess) {
+                Logger.Error("Failed to parse timestamp: " + timestampStr);
+                return false;
+            }
+        }
+    }
+
+    // Extract pattern
+    string patternSearch = "\"signalPattern\":\"";
+    int patternPos = StringFind(signalStr, patternSearch);
+    if(patternPos != -1) {
+        int startQuote = patternPos + StringLen(patternSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            signal.pattern = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+        }
+    }
+
+    // Log all extracted values
+    Logger.Debug(StringFormat(
+        "Final extracted values:" +
+        "\nTicker: [%s]" +
+        "\nAction: %s" +
+        "\nPrice: %.5f" +
+        "\nPattern: [%s]",
+        signal.ticker,
+        signal.signal == SIGNAL_BUY ? "BUY" : 
+            signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
+        signal.price,
+        signal.pattern
+    ));
+
+    // Validate the signal
+    bool validSignal = (
+        StringLen(signal.ticker) > 0 && 
+        signal.price > 0 && 
+        signal.signal != SIGNAL_NEUTRAL &&
+        StringLen(signal.pattern) > 0
+    );
+
+    Logger.Debug(StringFormat("Signal validation result: %s", validSignal ? "Valid" : "Invalid"));
+    
     return validSignal;
 }
-
 
 //+------------------------------------------------------------------+
 //| Check and apply profit protection                                  |
