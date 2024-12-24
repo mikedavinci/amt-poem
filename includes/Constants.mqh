@@ -35,7 +35,7 @@
 #define MAX_POSITIONS_PER_SYMBOL    1
 #define MAX_RETRY_ATTEMPTS          3
 #define DEFAULT_SLIPPAGE           5
-#define EMERGENCY_CLOSE_PERCENT    3
+#define EMERGENCY_CLOSE_PERCENT    5
 
 // Regular Stops
 #define FOREX_STOP_PIPS           80

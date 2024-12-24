@@ -226,7 +226,7 @@ private:
 
         for(int i = OrdersTotal() - 1; i >= 0; i--) {
             if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                if(OrderSymbol() == signal.ticker) {
+                if(OrderSymbol() == m_currentSymbol) {
                     bool shouldClose = false;
                     
                     if(OrderType() == OP_BUY && signal.exitType == EXIT_BEARISH) {
@@ -392,6 +392,201 @@ private:
         return response;
     }
 
+//+------------------------------------------------------------------+
+//| Parse signal from API response                                     |
+//+------------------------------------------------------------------+
+
+string ConvertToUpper(string text) {
+    string result = text;
+    StringToUpper(result);  // This modifies the string in place
+    return result;
+}
+
+bool ParseSignal(string response, SignalData &signal) {
+    // Initialize default values
+    signal.signal = SIGNAL_NEUTRAL;
+    signal.price = 0;
+    signal.ticker = "";
+    signal.pattern = "";
+
+    string signalStr = response;
+    
+    // Remove array brackets if present
+    if(StringGetCharacter(response, 0) == '[') {
+        signalStr = StringSubstr(response, 1, StringLen(response) - 2);
+    }
+    
+    Logger.Debug("Processing signal string: " + signalStr);
+
+    // Extract ticker
+    string tickerSearch = "\"ticker\":\"";
+    int tickerPos = StringFind(signalStr, tickerSearch);
+    if(tickerPos != -1) {
+      int startQuote = tickerPos + StringLen(tickerSearch);
+      int endQuote = StringFind(signalStr, "\"", startQuote);
+      if(endQuote != -1) {
+          string baseTicker = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+          // Add + only for forex pairs, not for crypto
+          signal.ticker = (StringFind(baseTicker, "BTC") >= 0 || 
+                          StringFind(baseTicker, "ETH") >= 0 ||
+                          StringFind(baseTicker, "LTC") >= 0) ? 
+                          baseTicker : baseTicker + "+";
+      }
+    }
+
+    // Extract action
+    string actionSearch = "\"action\":\"";
+    int actionPos = StringFind(signalStr, actionSearch);
+    if(actionPos != -1) {
+        int startQuote = actionPos + StringLen(actionSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string actionValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            Logger.Debug("Raw action value: " + actionValue);
+            
+            // Clean and compare action
+            if(StringCompare(actionValue, "BUY") == 0) {
+                signal.signal = SIGNAL_BUY;
+                Logger.Debug("Action set to BUY");
+            }
+            else if(StringCompare(actionValue, "SELL") == 0) {
+                signal.signal = SIGNAL_SELL;
+                Logger.Debug("Action set to SELL");
+            }
+        }
+    }
+
+    // Extract price
+    string priceSearch = "\"price\":";
+    int pricePos = StringFind(signalStr, priceSearch);
+    if(pricePos != -1) {
+        int startPrice = pricePos + StringLen(priceSearch);
+        int endPrice = StringFind(signalStr, ",", startPrice);
+        if(endPrice != -1) {
+            string priceStr = StringSubstr(signalStr, startPrice, endPrice - startPrice);
+            signal.price = StringToDouble(priceStr);
+            Logger.Debug(StringFormat("Extracted price: %.5f", signal.price));
+        }
+    }
+
+    string timestampSearch = "\"timestamp\":\"";
+    int timestampPos = StringFind(signalStr, timestampSearch);
+    if(timestampPos != -1) {
+        int startQuote = timestampPos + StringLen(timestampSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string timestampStr = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            bool parseSuccess = false;
+            signal.timestamp = ParseTimestamp(timestampStr, parseSuccess);
+            Logger.Debug(StringFormat("Parsed timestamp: %s -> %s", 
+                timestampStr, 
+                TimeToString(signal.timestamp)));
+
+            if(!parseSuccess) {
+                Logger.Error("Failed to parse timestamp: " + timestampStr);
+                return false;
+            }
+        }
+    }
+
+    // Extract pattern
+    string patternSearch = "\"signalPattern\":\"";
+    int patternPos = StringFind(signalStr, patternSearch);
+    if(patternPos != -1) {
+        int startQuote = patternPos + StringLen(patternSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            signal.pattern = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+        }
+    }
+
+    // Log all extracted values
+    Logger.Debug(StringFormat(
+        "Final extracted values:" +
+        "\nTicker: [%s]" +
+        "\nAction: %s" +
+        "\nPrice: %.5f" +
+        "\nPattern: [%s]",
+        signal.ticker,
+        signal.signal == SIGNAL_BUY ? "BUY" : 
+            signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
+        signal.price,
+        signal.pattern
+    ));
+
+    // Validate the signal
+    bool validSignal = (
+        StringLen(signal.ticker) > 0 && 
+        signal.price > 0 && 
+        signal.signal != SIGNAL_NEUTRAL &&
+        StringLen(signal.pattern) > 0
+    );
+
+    Logger.Debug(StringFormat("Signal validation result: %s", validSignal ? "Valid" : "Invalid"));
+    
+    return validSignal;
+}
+
+//+------------------------------------------------------------------+
+//| Parse timestamp string to datetime                                 |
+//+------------------------------------------------------------------+
+datetime ParseTimestamp(string rawTimestamp, bool &success) {
+    success = false;
+    string timestampStr = rawTimestamp;
+    
+    // Clean the timestamp string
+    StringReplace(timestampStr, "\"", ""); // Remove quotes
+    timestampStr = StringTrimRight(StringTrimLeft(timestampStr));
+    
+    Logger.Debug("Parsing timestamp: " + timestampStr);
+    
+    // Extract date components
+    int month = (int)StringToInteger(StringSubstr(timestampStr, 0, 2));
+    int day = (int)StringToInteger(StringSubstr(timestampStr, 3, 2));
+    int year = (int)StringToInteger(StringSubstr(timestampStr, 6, 4));
+    
+    // Extract time components
+    int hour = (int)StringToInteger(StringSubstr(timestampStr, 11, 2));
+    int minute = (int)StringToInteger(StringSubstr(timestampStr, 14, 2));
+    int second = (int)StringToInteger(StringSubstr(timestampStr, 17, 2));
+    
+    // Handle AM/PM
+    bool isPM = StringFind(timestampStr, "PM") >= 0;
+    if(isPM && hour < 12) hour += 12;
+    
+    Logger.Debug(StringFormat(
+        "Timestamp components: Y:%d M:%d D:%d H:%d M:%d S:%d PM:%s",
+        year, month, day, hour, minute, second,
+        isPM ? "Yes" : "No"
+    ));
+    
+    // Create datetime string in MT4 format (YYYY.MM.DD HH:MM:SS)
+    string formattedDateTime = StringFormat(
+        "%04d.%02d.%02d %02d:%02d:%02d",
+        year, month, day, hour, minute, second
+    );
+    
+    // Convert to datetime
+    datetime result = StringToTime(formattedDateTime);
+    
+    if(result > 0) {
+        success = true;
+        Logger.Debug(StringFormat(
+            "Successfully parsed timestamp: %s -> %s",
+            timestampStr,
+            TimeToString(result, TIME_DATE|TIME_MINUTES|TIME_SECONDS)
+        ));
+    } else {
+        Logger.Error(StringFormat(
+            "Failed to parse timestamp: %s -> %s",
+            timestampStr,
+            formattedDateTime
+        ));
+    }
+    
+    return result;
+}
+
     bool ValidateSignal(const SignalData& signal) {
         if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
             Logger.Error(StringFormat(
@@ -412,6 +607,62 @@ private:
 
         return true;
     }
+
+
+    //+------------------------------------------------------------------+
+//| Check and apply profit protection                                  |
+//+------------------------------------------------------------------+
+void CheckProfitProtection(const PositionMetrics &metrics) {
+    if(m_currentSymbol != Symbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in CheckProfitProtection - Current: %s, MT4: %s",
+            m_currentSymbol, Symbol()));
+        return;
+    }
+
+    if(metrics.totalPositions == 0) return;
+
+    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_currentSymbol && 
+               StringFind(OrderComment(), "Exit Signal") == -1) { 
+                double currentPrice = OrderType() == OP_BUY ?
+                                    m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+                double openPrice = OrderOpenPrice();
+                double stopLoss = OrderStopLoss();
+
+                // Calculate profit thresholds
+                double profitThreshold;
+                double lockProfit;
+
+                if(m_symbolInfo.IsCryptoPair()) {
+                    profitThreshold = openPrice * (CRYPTO_PROFIT_THRESHOLD / 100.0);
+                    lockProfit = openPrice * (CRYPTO_PROFIT_LOCK_PERCENT / 100.0);
+                } else {
+                    profitThreshold = FOREX_PROFIT_PIPS_THRESHOLD * m_symbolInfo.GetPipSize();
+                    lockProfit = FOREX_PROFIT_LOCK_PIPS * m_symbolInfo.GetPipSize();
+                }
+
+                // Check if profit exceeds threshold
+                if(OrderType() == OP_BUY) {
+                    if((currentPrice - openPrice) >= profitThreshold) {
+                        double newStop = currentPrice - lockProfit;
+                        if(stopLoss == 0 || newStop > stopLoss) {
+                            m_tradeManager.ModifyPosition(OrderTicket(), newStop);
+                        }
+                    }
+                } else {
+                    if((openPrice - currentPrice) >= profitThreshold) {
+                        double newStop = currentPrice + lockProfit;
+                        if(stopLoss == 0 || newStop < stopLoss) {
+                            m_tradeManager.ModifyPosition(OrderTicket(), newStop);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
     void CloseAllPositions(string reason) {
         if(m_currentSymbol != Symbol()) {

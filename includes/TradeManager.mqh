@@ -27,6 +27,27 @@ private:
     bool            m_isTradeAllowed;        // Trade permission flag
     bool            m_awaitingOppositeSignal; // New flag for signal management
     ENUM_TRADE_SIGNAL m_lastClosedDirection;  // Track last closed position direction
+    string          m_currentSymbol;         // Current symbol being traded
+
+     string GetSymbol() const {
+        return m_symbolInfo ? m_symbolInfo.GetSymbol() : "";
+    }
+
+    bool ValidateSymbol() const {
+        if(!m_symbolInfo) {
+            Logger.Error("Symbol info not initialized");
+            return false;
+        }
+        
+        string symbol = GetSymbol();
+        if(symbol != Symbol()) {
+            Logger.Error(StringFormat(
+                "Symbol mismatch - Current: %s, MT4: %s",
+                symbol, Symbol()));
+            return false;
+        }
+        return true;
+    }
 
     // Private Methods for Trade Validation
     bool CanOpenNewPosition(ENUM_TRADE_SIGNAL newSignal) {
@@ -151,27 +172,19 @@ double GetCoordinatedStopDistance(double currentPrice, double entryPrice, int or
     return finalStopDistance;
 }
 
-    bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
-                           double tp, string comment) {
+bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
+                       double tp, string comment) {
+    int ticket = -1;
+    int attempts = 0;
+    bool success = false;
 
-     //Logger.Debug(StringFormat("ExecuteMarketOrder - Received comment: '%s'", comment));
+    if(comment == NULL) comment = "";
+    if(StringLen(comment) > 31) {
+        comment = StringSubstr(comment, 0, 31);
+    }
 
-        int ticket = -1;
-        int attempts = 0;
-        bool success = false;
-
-        // Ensure comment is not NULL
-            if(comment == NULL) comment = "";
-
-            // Ensure the comment doesn't exceed the maximum length (31 characters)
-            if(StringLen(comment) > 31) {
-                comment = StringSubstr(comment, 0, 31);
-            }
-
-                // Get current price before validation
     double currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
 
-    // Add risk validation
     if(!m_riskManager.ValidateNewPosition(lots, currentPrice, sl, type)) {
         Logger.Warning(StringFormat(
             "Order rejected - Risk validation failed:" +
@@ -187,90 +200,78 @@ double GetCoordinatedStopDistance(double currentPrice, double entryPrice, int or
         return false;
     }
 
-        while(attempts < m_maxRetries && !success) {
-            if(attempts > 0) {
-                RefreshRates();
-                int delay = MathMin(INITIAL_RETRY_DELAY * (attempts + 1), MAX_RETRY_DELAY);
-                Sleep(delay);
-                // Update current price after refresh
-                currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
+    while(attempts < m_maxRetries && !success) {
+        if(attempts > 0) {
+            RefreshRates();
+            int delay = MathMin(INITIAL_RETRY_DELAY * (attempts + 1), MAX_RETRY_DELAY);
+            Sleep(delay);
+            currentPrice = (type == OP_BUY) ? m_symbolInfo.GetAsk() : m_symbolInfo.GetBid();
+        }
+
+        if(!ValidateEntryPrice(signalPrice, currentPrice, type)) {
+            Logger.Error("Price moved too far from signal price");
+            return false;
+        }
+
+        double stopDistance = GetCoordinatedStopDistance(currentPrice, signalPrice, type);
+        double newStopLoss = type == OP_BUY ?
+            currentPrice - stopDistance :
+            currentPrice + stopDistance;
+
+        if(sl > 0) {
+            if(type == OP_BUY) {
+                newStopLoss = MathMin(sl, newStopLoss);
+            } else {
+                newStopLoss = MathMax(sl, newStopLoss);
             }
+        }
 
+        if(!m_symbolInfo.ValidateStopLoss(type, currentPrice, newStopLoss)) {
+            Logger.Error(StringFormat(
+                "Invalid stop loss calculated - Price: %.5f, SL: %.5f",
+                currentPrice, newStopLoss));
+            return false;
+        }
 
-             // Log attempt details
-                    //Logger.Debug(StringFormat(
-                        // "Attempting order - Type: %s, Lots: %.2f, Price: %.5f, SL: %.5f, TP: %.5f, Comment: '%s'",
-                        // type == OP_BUY ? "BUY" : "SELL", lots, currentPrice, sl, tp, comment
-                    // ));
+        ticket = OrderSend(
+            m_symbolInfo.GetSymbol(),
+            type,
+            lots,
+            currentPrice,
+            m_slippage,
+            newStopLoss,
+            tp,
+            comment,
+            0,
+            0,
+            type == OP_BUY ? clrGreen : clrRed
+        );
 
-            // Validate entry price against signal price
-            if(!ValidateEntryPrice(signalPrice, currentPrice, type)) {
-                Logger.Error("Price moved too far from signal price");
-                return false;
-            }
-
-            // Calculate ATR-based stop loss and emergency stops
-            double stopDistance = GetCoordinatedStopDistance(currentPrice, OrderOpenPrice(), OrderType());
-            double newStopLoss = type == OP_BUY ?
-                currentPrice - stopDistance :
-                currentPrice + stopDistance;
-
-            // Use provided stop loss if it's more conservative
-            if(sl > 0) {
-                if(type == OP_BUY) {
-                    newStopLoss = MathMin(sl, newStopLoss);
-                } else {
-                    newStopLoss = MathMax(sl, newStopLoss);
-                }
-            }
-
-            // Validate final stop loss
-            if(!m_symbolInfo.ValidateStopLoss(type, currentPrice, newStopLoss)) {
-                Logger.Error(StringFormat(
-                    "Invalid stop loss calculated - Price: %.5f, SL: %.5f",
-                    currentPrice, newStopLoss));
-                return false;
-            }
-
-             ticket = OrderSend(
-                        m_symbolInfo.GetSymbol(),  // Symbol
-                        type,                      // Operation type
-                        lots,                      // Lot size
-                        currentPrice,              // Price
-                        m_slippage,               // Slippage
-                        sl,                       // Stop Loss
-                        tp,                       // Take Profit
-                        comment,                  // Comment
-                        0,                        // Magic Number
-                        0,                        // Expiration
-                        type == OP_BUY ? clrGreen : clrRed  // Color
-                    );
-
-             if(ticket > 0) {
-                        success = true;
-                        RecordTrade(ticket, type, lots, currentPrice, sl, tp, comment);
-                        Logger.Trade(StringFormat(
-                            "Order executed successfully:" +
-                            "\nTicket: %d" +
-                            "\nType: %s" +
-                            "\nPrice: %.5f" +
-                            "\nStop Loss: %.5f" +
-                            "\nComment: %s",
-                            ticket,
-                            type == OP_BUY ? "BUY" : "SELL",
-                            currentPrice,
-                            sl,
-                            comment
-                        ));
-                    } else {
-                        int error = GetLastError();
-                        LogTradeError(StringFormat("Order execution failed (Attempt %d/%d)",
-                                     attempts + 1, m_maxRetries), error);
-                        attempts++;
-                    }
-                }
-                return success;
-            }
+        if(ticket > 0) {
+            success = true;
+            RecordTrade(ticket, type, lots, currentPrice, newStopLoss, tp, comment);
+            Logger.Trade(StringFormat(
+                "Order executed successfully:" +
+                "\nTicket: %d" +
+                "\nType: %s" +
+                "\nPrice: %.5f" +
+                "\nStop Loss: %.5f" +
+                "\nComment: %s",
+                ticket,
+                type == OP_BUY ? "BUY" : "SELL",
+                currentPrice,
+                newStopLoss,
+                comment
+            ));
+        } else {
+            int error = GetLastError();
+            LogTradeError(StringFormat("Order execution failed (Attempt %d/%d)",
+                         attempts + 1, m_maxRetries), error);
+            attempts++;
+        }
+    }
+    return success;
+}
 
 bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
         if(m_symbolInfo.IsCryptoPair()) {
@@ -321,26 +322,25 @@ bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
     }
 
 
-   void CheckTrailingStop() {
+void CheckTrailingStop() {
     if(!HasOpenPosition()) return;
 
     for(int i = OrdersTotal() - 1; i >= 0; i--) {
         if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                double currentPrice = OrderType() == OP_BUY ?
+            if(OrderSymbol() == m_currentSymbol) {
+                int orderType = OrderType();
+                double currentPrice = orderType == OP_BUY ?
                     m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
                 double openPrice = OrderOpenPrice();
 
-                // First check emergency stop
-                if(CheckEmergencyStop(currentPrice, openPrice, OrderType())) {
+                if(CheckEmergencyStop(currentPrice, openPrice, orderType)) {
                     ClosePosition(OrderTicket(), "EMERGENCY");
                     continue;
                 }
 
-                // Only set initial stop loss if none exists
                 if(OrderStopLoss() == 0) {
-                double stopDistance = GetCoordinatedStopDistance(currentPrice, OrderOpenPrice(), OrderType());
-                    double initialStopLoss = OrderType() == OP_BUY ?
+                    double stopDistance = GetCoordinatedStopDistance(currentPrice, openPrice, orderType);
+                    double initialStopLoss = orderType == OP_BUY ?
                         openPrice - stopDistance :
                         openPrice + stopDistance;
 
@@ -442,6 +442,7 @@ public:
           m_slippage(slippage),
           m_maxRetries(maxRetries) {
         m_isTradeAllowed = true;
+        m_currentSymbol = m_symbolInfo.GetSymbol();
     }
 
     bool HasOpenPositionInDirection(ENUM_TRADE_SIGNAL direction) {
@@ -460,6 +461,7 @@ public:
 
     // Trade Execution Methods
     bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
+        
          // Validate symbol
         if(m_symbolInfo.GetSymbol() != Symbol()) {
             Logger.Error(StringFormat(
@@ -766,7 +768,7 @@ bool ModifyPosition(int ticket, double sl, double tp = 0) {
             int total = OrdersTotal();
             for(int i = 0; i < total; i++) {
                 if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    if(OrderSymbol() == m_currentSymbol) {
                         return true;
                     }
                 }
@@ -780,7 +782,7 @@ bool ModifyPosition(int ticket, double sl, double tp = 0) {
             int total = OrdersTotal();
             for(int i = 0; i < total; i++) {
                 if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    if(OrderSymbol() == m_currentSymbol) {
                         metrics.totalPositions++;
                         metrics.totalVolume += OrderLots();
                         metrics.weightedPrice += OrderOpenPrice() * OrderLots();
