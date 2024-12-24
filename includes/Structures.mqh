@@ -52,15 +52,18 @@ struct SignalData {
     datetime          timestamp;      // Signal timestamp
     string            pattern;        // Trading pattern
     ENUM_INSTRUMENT_TYPE instrumentType; // Forex or Crypto
-    ENUM_EXIT_TYPE exitType;
-    bool isExitSignal; 
+    ENUM_EXIT_TYPE   exitType;       // EXIT_BEARISH or EXIT_BULLISH
+    bool             isExit;         // Exit signal flag
+    double           sl2;            // Stop Loss 2 from API
+    double           tp1;            // Take Profit 1 (from exit signals/current price)
 
     // Constructor
     SignalData() : ticker(""), signal(SIGNAL_NEUTRAL), price(0),
                    timestamp(0), pattern(""), 
                    instrumentType(INSTRUMENT_FOREX),
                    exitType(EXIT_NONE),
-                   isExitSignal(false) {}
+                   isExit(false),
+                   sl2(0), tp1(0) {}
 };
 
 // Trade Record Structure

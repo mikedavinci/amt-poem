@@ -51,19 +51,19 @@
 // #define CRYPTO_ATR_MULTIPLIER    2.5     // Higher multiplier for crypto due to volatility
 
 // BREAKEVEN settings for Forex
-#define FOREX_BREAKEVEN_PROFIT_PIPS   10    // Pips of profit before breakeven
-#define FOREX_BREAKEVEN_BUFFER_PIPS   5     // Buffer pips above entry price
+#define FOREX_BREAKEVEN_PROFIT_PIPS   20    // Pips of profit before breakeven
+#define FOREX_BREAKEVEN_BUFFER_PIPS   2     // Buffer pips above entry price
 
 // BREAKEVEN settings for Crypto
-#define CRYPTO_BREAKEVEN_PROFIT_PERCENT 1.0  // Percentage of profit before breakeven (1%)
+#define CRYPTO_BREAKEVEN_PROFIT_PERCENT 5.0  // Percentage of profit before breakeven (1%)
 #define CRYPTO_BREAKEVEN_BUFFER_PERCENT 0.5  // Buffer percentage above entry price (0.1%)
 
 // Profit Protection Settings
 #define PROFIT_CHECK_INTERVAL      300    // Check profit every 5 minutes
-#define FOREX_PROFIT_PIPS_THRESHOLD 20
+#define FOREX_PROFIT_PIPS_THRESHOLD 30
 #define FOREX_PROFIT_LOCK_PIPS     10
-#define CRYPTO_PROFIT_THRESHOLD    1.0
-#define CRYPTO_PROFIT_LOCK_PERCENT 0.5
+#define CRYPTO_PROFIT_THRESHOLD    5.0
+#define CRYPTO_PROFIT_LOCK_PERCENT 0.75
 
 // Trading Session Hours (Server Time)
 #define ASIAN_SESSION_START      22

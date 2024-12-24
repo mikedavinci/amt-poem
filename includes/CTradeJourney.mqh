@@ -183,38 +183,27 @@ public:
     }
 
     void ProcessSignals() {
-        // Symbol validation
-        if(m_currentSymbol != Symbol()) {
-            Logger.Error("Symbol mismatch in ProcessSignals");
-            return;
-        }
+    if(m_currentSymbol != Symbol()) return;
 
-        string response = FetchSignals();
-        if(response == "") return;
+    string response = FetchSignals();
+    if(response == "") return;
 
-        SignalData signal;
-        if(ParseSignal(response, signal)) {
-            // Validate signal is for current symbol
-            if(signal.ticker != m_currentSymbol) {
-                Logger.Warning(StringFormat(
-                    "Signal ticker mismatch - Expected: %s, Got: %s",
-                    m_currentSymbol, signal.ticker));
-                return;
-            }
-
-            if(ValidateSignal(signal)) {
-                if(signal.isExitSignal) {
-                    ProcessExitSignal(signal);
-                } else {
-                    signal.instrumentType = m_symbolInfo.IsCryptoPair() ?
-                        INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
-                    ExecuteSignal(signal);
-                }
+    SignalData signal;
+    if(ParseSignal(response, signal)) {
+        if(ValidateSignal(signal)) {
+            // Handle exit signals first
+            if(signal.isExit) {
+                m_tradeManager.ProcessExitSignal(signal);
+            } else {
+                // Regular signal processing
+                signal.instrumentType = m_symbolInfo.IsCryptoPair() ?
+                    INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
+                ExecuteSignal(signal);
             }
         }
     }
+}
 
-    // Rest of your existing methods with added symbol validation...
 private:
     void ProcessExitSignal(const SignalData& signal) {
         if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
@@ -229,14 +218,18 @@ private:
                 if(OrderSymbol() == m_currentSymbol) {
                     bool shouldClose = false;
                     
-                    if(OrderType() == OP_BUY && signal.exitType == EXIT_BEARISH) {
-                        shouldClose = true;
-                        Logger.Debug("Closing BUY position on Bearish Exit signal");
+                    if(OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) {
+                    Logger.Debug(StringFormat(
+                        "Closing BUY position at TP: %.5f (Bullish Exit)",
+                        signal.price));
+                    ClosePosition(OrderTicket(), "Exit Signal: Bullish");
                     }
-                    else if(OrderType() == OP_SELL && signal.exitType == EXIT_BULLISH) {
-                        shouldClose = true;
-                        Logger.Debug("Closing SELL position on Bullish Exit signal");
-                    }
+                    else if(OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH) {
+                    Logger.Debug(StringFormat(
+                        "Closing SELL position at TP: %.5f (Bearish Exit)",
+                        signal.price));
+                    ClosePosition(OrderTicket(), "Exit Signal: Bearish");
+                }
                     
                     if(shouldClose) {
                         m_tradeManager.ClosePosition(OrderTicket(), 
@@ -276,8 +269,14 @@ private:
                      signal.signal, signalDirection, signal.price));
 
         int orderType = (signal.signal == SIGNAL_BUY) ? OP_BUY : OP_SELL;
-        double stopLoss = m_symbolInfo.CalculateStopLoss(orderType, signal.price);
-        Logger.Debug(StringFormat("Calculated Stop Loss: %.5f", stopLoss));
+        double stopLoss;
+        if(signal.sl2 > 0) {
+            stopLoss = signal.sl2;
+            Logger.Debug(StringFormat("Using SL2 from API: %.5f", stopLoss));
+        } else {
+            stopLoss = m_symbolInfo.CalculateStopLoss(orderType, signal.price);
+            Logger.Debug(StringFormat("Using calculated Stop Loss: %.5f", stopLoss));
+        }
 
         double riskPercent = m_symbolInfo.IsCryptoPair() ?
             CRYPTO_STOP_PERCENT : DEFAULT_RISK_PERCENT;
@@ -299,15 +298,17 @@ private:
         bool success = false;
 
         switch(signal.signal) {
-            case SIGNAL_BUY:
-                Logger.Debug(StringFormat("Executing BUY order - Lots: %.2f, Stop Loss: %.5f", lots, stopLoss));
-                success = m_tradeManager.OpenBuyPosition(lots, stopLoss, 0, tradeComment);
-                break;
+          case SIGNAL_BUY:
+              Logger.Debug(StringFormat("Executing BUY order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
+                  lots, stopLoss, signal.tp1));
+              success = m_tradeManager.OpenBuyPosition(lots, stopLoss, signal.tp1, tradeComment);
+              break;
 
-            case SIGNAL_SELL:
-                Logger.Debug(StringFormat("Executing SELL order - Lots: %.2f, Stop Loss: %.5f", lots, stopLoss));
-                success = m_tradeManager.OpenSellPosition(lots, stopLoss, 0, tradeComment);
-                break;
+          case SIGNAL_SELL:
+              Logger.Debug(StringFormat("Executing SELL order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
+                  lots, stopLoss, signal.tp1));
+              success = m_tradeManager.OpenSellPosition(lots, stopLoss, signal.tp1, tradeComment);
+              break;
 
             default:
                 Logger.Warning(StringFormat("Invalid signal type (%d) - No trade executed", signal.signal));
@@ -417,6 +418,44 @@ bool ParseSignal(string response, SignalData &signal) {
     }
     
     Logger.Debug("Processing signal string: " + signalStr);
+
+      // Extract sl2
+    string sl2Search = "\"sl2\":";
+    int sl2Pos = StringFind(signalStr, sl2Search);
+    if(sl2Pos != -1) {
+        int startValue = sl2Pos + StringLen(sl2Search);
+        int endValue = StringFind(signalStr, ",", startValue);
+        if(endValue != -1) {
+            string sl2Str = StringSubstr(signalStr, startValue, endValue - startValue);
+            signal.sl2 = StringToDouble(sl2Str);
+            Logger.Debug(StringFormat("Extracted SL2: %.5f", signal.sl2));
+        }
+    }
+
+    // Parse alert pattern and check for exit signals
+    string alertSearch = "\"alert\":\"";
+    int alertPos = StringFind(signalStr, alertSearch);
+    if(alertPos != -1) {
+        int startQuote = alertPos + StringLen(alertSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string alertValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            
+            // Check for exit signals
+            if(StringFind(alertValue, "ExitsBearish Exit") >= 0) {
+                signal.isExit = true;
+                signal.exitType = EXIT_BEARISH;
+                signal.tp1 = signal.price;  // Use current price as take profit
+            }
+            else if(StringFind(alertValue, "ExitsBullish Exit") >= 0) {
+                signal.isExit = true;
+                signal.exitType = EXIT_BULLISH;
+                signal.tp1 = signal.price;  // Use current price as take profit
+            }
+            
+            signal.pattern = alertValue;
+        }
+    }
 
     // Extract ticker
     string tickerSearch = "\"ticker\":\"";
@@ -630,32 +669,37 @@ void CheckProfitProtection(const PositionMetrics &metrics) {
                                     m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
                 double openPrice = OrderOpenPrice();
                 double stopLoss = OrderStopLoss();
+                double tp1 = OrderTakeProfit();
 
-                // Calculate profit thresholds
-                double profitThreshold;
-                double lockProfit;
 
-                if(m_symbolInfo.IsCryptoPair()) {
-                    profitThreshold = openPrice * (CRYPTO_PROFIT_THRESHOLD / 100.0);
-                    lockProfit = openPrice * (CRYPTO_PROFIT_LOCK_PERCENT / 100.0);
-                } else {
-                    profitThreshold = FOREX_PROFIT_PIPS_THRESHOLD * m_symbolInfo.GetPipSize();
-                    lockProfit = FOREX_PROFIT_LOCK_PIPS * m_symbolInfo.GetPipSize();
-                }
+                // Only manage stops and protection if not already at TP
+                if(tp1 == 0) {
+                    // Calculate profit thresholds
+                    double profitThreshold;
+                    double lockProfit;
 
-                // Check if profit exceeds threshold
-                if(OrderType() == OP_BUY) {
-                    if((currentPrice - openPrice) >= profitThreshold) {
-                        double newStop = currentPrice - lockProfit;
-                        if(stopLoss == 0 || newStop > stopLoss) {
-                            m_tradeManager.ModifyPosition(OrderTicket(), newStop);
-                        }
+                    if(m_symbolInfo.IsCryptoPair()) {
+                        profitThreshold = openPrice * (CRYPTO_PROFIT_THRESHOLD / 100.0);
+                        lockProfit = openPrice * (CRYPTO_PROFIT_LOCK_PERCENT / 100.0);
+                    } else {
+                        profitThreshold = FOREX_PROFIT_PIPS_THRESHOLD * m_symbolInfo.GetPipSize();
+                        lockProfit = FOREX_PROFIT_LOCK_PIPS * m_symbolInfo.GetPipSize();
                     }
-                } else {
-                    if((openPrice - currentPrice) >= profitThreshold) {
-                        double newStop = currentPrice + lockProfit;
-                        if(stopLoss == 0 || newStop < stopLoss) {
-                            m_tradeManager.ModifyPosition(OrderTicket(), newStop);
+
+                    // Check if profit exceeds threshold for trailing
+                    if(OrderType() == OP_BUY) {
+                        if((currentPrice - openPrice) >= profitThreshold) {
+                            double newStop = currentPrice - lockProfit;
+                            if(stopLoss == 0 || newStop > stopLoss) {
+                                m_tradeManager.ModifyPosition(OrderTicket(), newStop);
+                            }
+                        }
+                    } else {
+                        if((openPrice - currentPrice) >= profitThreshold) {
+                            double newStop = currentPrice + lockProfit;
+                            if(stopLoss == 0 || newStop < stopLoss) {
+                                m_tradeManager.ModifyPosition(OrderTicket(), newStop);
+                            }
                         }
                     }
                 }
