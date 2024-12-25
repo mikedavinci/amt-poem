@@ -30,7 +30,7 @@ private:
     string          m_currentSymbol;         // Current symbol being traded
     datetime        m_lastCheck;             // Last check timestamp
     datetime        m_lastSignalTimestamp;   // Last signal timestamp
-    
+
      string GetSymbol() const {
         return m_symbolInfo ? m_symbolInfo.GetSymbol() : "";
     }
@@ -561,42 +561,43 @@ public:
     }
 
 void ProcessExitSignal(const SignalData& signal) {
-        // Validate symbol
-        if(m_symbolInfo.GetSymbol() != Symbol()) {
-            Logger.Error(StringFormat(
-                "Symbol mismatch in ProcessExitSignal - Expected: %s, Got: %s",
-                Symbol(), m_symbolInfo.GetSymbol()));
-            return;
-        }
+    Logger.Info(StringFormat("Processing exit signal for %s - Type: %s, Exit Price: %.5f", 
+        m_symbolInfo.GetSymbol(),
+        signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+        signal.price));  // Use signal.price for logging
 
-        if(!CanTrade()) return;
+    for(int i = OrdersTotal() - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                bool shouldClose = false;
+                
+                Logger.Debug(StringFormat("Checking position #%d - Type: %s, TakeProfit: %.5f",
+                    OrderTicket(),
+                    OrderType() == OP_BUY ? "BUY" : "SELL",
+                    OrderTakeProfit()));
 
-        for(int i = OrdersTotal() - 1; i >= 0; i--) {
-            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                    bool shouldClose = false;
-                    
-                    if(OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) {
-                        Logger.Debug(StringFormat(
-                            "Closing BUY position at TP: %.5f (Bullish Exit)",
-                            signal.price));
-                        shouldClose = true;
+                if(OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) {
+                    // First modify TP then close
+                    bool tpModified = OrderModify(OrderTicket(), 
+                        OrderOpenPrice(), 
+                        OrderStopLoss(), 
+                        signal.price,  // Use signal.price instead of ohlcv.close
+                        0);
+                        
+                    if(tpModified) {
+                        Logger.Info(StringFormat("Modified BUY position TP to %.5f", signal.price));
                     }
-                    else if(OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH) {
-                        Logger.Debug(StringFormat(
-                            "Closing SELL position at TP: %.5f (Bearish Exit)",
-                            signal.price));
-                        shouldClose = true;
-                    }
-                    
-                    if(shouldClose) {
-                        ClosePosition(OrderTicket(), 
-                            StringFormat("Exit Signal: %s", 
-                                signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
-                    }
+                    shouldClose = true;
+                }
+                
+                if(shouldClose) {
+                    ClosePosition(OrderTicket(), 
+                        StringFormat("Exit Signal: %s", 
+                            signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
                 }
             }
         }
+    }
 }
     
     // Trade Execution Methods

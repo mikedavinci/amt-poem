@@ -518,15 +518,18 @@ bool ParseSignal(string response, SignalData &signal) {
             string alertValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
             
             // Check for exit signals
-            if(StringFind(alertValue, "ExitsBearish Exit") >= 0) {
+                if(StringFind(alertValue, "ExitsBearish Exit") >= 0 || StringFind(alertValue, "Exits Bearish Exit") >= 0) {
                 signal.isExit = true;
                 signal.exitType = EXIT_BEARISH;
                 signal.tp1 = signal.price;  // Use current price as take profit
+                Logger.Info(StringFormat("Exit signal detected - Setting TP1 to close price: %.5f", signal.price));
+
             }
-            else if(StringFind(alertValue, "ExitsBullish Exit") >= 0) {
+            else if(StringFind(alertValue, "ExitsBullish Exit") >= 0 || StringFind(alertValue, "Exits Bullish Exit") >= 0) {
                 signal.isExit = true;
                 signal.exitType = EXIT_BULLISH;
                 signal.tp1 = signal.price;  // Use current price as take profit
+                Logger.Info(StringFormat("Exit signal detected - Setting TP1 to close price: %.5f", signal.price));
             }
             
             signal.pattern = alertValue;
