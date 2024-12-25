@@ -56,6 +56,7 @@ struct SignalData {
     bool             isExit;         // Exit signal flag
     double           sl2;            // Stop Loss 2 from API
     double           tp1;            // Take Profit 1 (from exit signals/current price)
+    double           tp2;            // Take Profit 2 (from exit signals/current price)
 
     // Constructor
     SignalData() : ticker(""), signal(SIGNAL_NEUTRAL), price(0),
@@ -63,7 +64,7 @@ struct SignalData {
                    instrumentType(INSTRUMENT_FOREX),
                    exitType(EXIT_NONE),
                    isExit(false),
-                   sl2(0), tp1(0) {}
+                   sl2(0), tp1(0), tp2(0) {}
 };
 
 // Trade Record Structure

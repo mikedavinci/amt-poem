@@ -410,12 +410,52 @@ void ExecuteSignal(const SignalData& signal) {
 
     int orderType = (signal.signal == SIGNAL_BUY) ? OP_BUY : OP_SELL;
     double stopLoss;
-    if(signal.sl2 > 0) {
-        stopLoss = signal.sl2;
-        Logger.Debug(StringFormat("Using SL2 from API: %.5f", stopLoss));
+
+    // Determine stop loss based on order type
+    if(orderType == OP_BUY) {
+        // For BUY positions, use sl2 as stop loss
+        if(signal.sl2 > 0) {
+            stopLoss = signal.sl2;
+            Logger.Debug(StringFormat("BUY Position: Using SL2 for stop loss: %.5f", stopLoss));
+            
+            // Validate SL2 is below entry for BUY
+            if(stopLoss >= signal.price) {
+                Logger.Error(StringFormat(
+                    "Invalid BUY stop loss (SL2) - Must be below entry price:" +
+                    "\nEntry: %.5f" +
+                    "\nStop Loss (SL2): %.5f",
+                    signal.price, stopLoss));
+                return;
+            }
+        } else {
+            Logger.Error("BUY Signal missing SL2 value for stop loss");
+            return;
+        }
     } else {
-        stopLoss = m_symbolInfo.CalculateStopLoss(orderType, signal.price);
-        Logger.Debug(StringFormat("Using calculated Stop Loss: %.5f", stopLoss));
+        // For SELL positions, use tp2 as stop loss
+        if(signal.tp2 > 0) {
+            stopLoss = signal.tp2;
+            Logger.Debug(StringFormat("SELL Position: Using TP2 for stop loss: %.5f", stopLoss));
+            
+            // Validate TP2 is above entry for SELL
+            if(stopLoss <= signal.price) {
+                Logger.Error(StringFormat(
+                    "Invalid SELL stop loss (TP2) - Must be above entry price:" +
+                    "\nEntry: %.5f" +
+                    "\nStop Loss (TP2): %.5f",
+                    signal.price, stopLoss));
+                return;
+            }
+        } else {
+            Logger.Error("SELL Signal missing TP2 value for stop loss");
+            return;
+        }
+    }
+
+    // Validate final stop loss value
+    if(stopLoss <= 0) {
+        Logger.Error(StringFormat("Invalid stop loss value: %.5f", stopLoss));
+        return;
     }
 
     double riskPercent = m_symbolInfo.IsCryptoPair() ?
@@ -439,14 +479,24 @@ void ExecuteSignal(const SignalData& signal) {
 
     switch(signal.signal) {
         case SIGNAL_BUY:
-            Logger.Debug(StringFormat("Executing BUY order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
-                lots, stopLoss, signal.tp1));
+            Logger.Debug(StringFormat(
+                "Executing BUY order:" +
+                "\nLots: %.2f" +
+                "\nEntry: %.5f" +
+                "\nStop Loss (SL2): %.5f" +
+                "\nTake Profit: %.5f", 
+                lots, signal.price, stopLoss, signal.tp1));
             success = m_tradeManager.OpenBuyPosition(lots, stopLoss, signal.tp1, tradeComment, signal);
             break;
 
         case SIGNAL_SELL:
-            Logger.Debug(StringFormat("Executing SELL order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
-                lots, stopLoss, signal.tp1));
+            Logger.Debug(StringFormat(
+                "Executing SELL order:" +
+                "\nLots: %.2f" +
+                "\nEntry: %.5f" +
+                "\nStop Loss (TP2): %.5f" +
+                "\nTake Profit: %.5f", 
+                lots, signal.price, stopLoss, signal.tp1));
             success = m_tradeManager.OpenSellPosition(lots, stopLoss, signal.tp1, tradeComment, signal);
             break;
 
@@ -463,14 +513,14 @@ void ExecuteSignal(const SignalData& signal) {
             "\nLots: %.2f" +
             "\nEntry: %.5f" +
             "\nStop Loss: %.5f" +
-            "\nPattern: %s" +
-            "\nSignal Value: %d",
+            "\nTake Profit: %.5f" +
+            "\nPattern: %s",
             signalDirection,
             lots,
             signal.price,
             stopLoss,
-            signal.pattern,
-            signal.signal
+            signal.tp1,
+            signal.pattern
         ));
     }
 }
@@ -602,6 +652,20 @@ bool ParseSignal(string response, SignalData &signal) {
             StringReplace(sl2Str, "\"", ""); // Remove quotes if present
             signal.sl2 = StringToDouble(sl2Str);
             Logger.Debug(StringFormat("Extracted SL2: %.5f", signal.sl2));
+        }
+    }
+
+    // Extract TP2 from JSON
+    string tp2Search = "\"tp2\":";
+    int tp2Pos = StringFind(signalStr, tp2Search);
+    if(tp2Pos != -1) {
+        int startValue = tp2Pos + StringLen(tp2Search);
+        int endValue = StringFind(signalStr, ",", startValue);
+        if(endValue != -1) {
+            string tp2Str = StringSubstr(signalStr, startValue, endValue - startValue);
+            StringReplace(tp2Str, "\"", ""); // Remove quotes if present
+            signal.tp2 = StringToDouble(tp2Str);
+            Logger.Debug(StringFormat("Extracted TP2: %.5f", signal.tp2));
         }
     }
 
