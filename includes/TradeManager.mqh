@@ -561,39 +561,97 @@ public:
     }
 
 void ProcessExitSignal(const SignalData& signal) {
-    Logger.Info(StringFormat("Processing exit signal for %s - Type: %s, Exit Price: %.5f", 
+    Logger.Info(StringFormat("Processing TP exit signal for %s - Type: %s, TP Price: %.5f", 
         m_symbolInfo.GetSymbol(),
         signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
-        signal.price));  // Use signal.price for logging
+        signal.price));
 
     for(int i = OrdersTotal() - 1; i >= 0; i--) {
         if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
             if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                bool shouldClose = false;
-                
-                Logger.Debug(StringFormat("Checking position #%d - Type: %s, TakeProfit: %.5f",
+                 Logger.Info(StringFormat(
+                    "Found matching position:" +
+                    "\nTicket: %d" +
+                    "\nType: %s" +
+                    "\nOpen Price: %.5f" +
+                    "\nCurrent TP: %.5f",
                     OrderTicket(),
                     OrderType() == OP_BUY ? "BUY" : "SELL",
-                    OrderTakeProfit()));
+                    OrderOpenPrice(),
+                    OrderTakeProfit()
+                ));
 
+                bool shouldModifyTP = false;
+                
+                // Only modify BUY positions with bullish exits
+                // and SELL positions with bearish exits
                 if(OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) {
-                    // First modify TP then close
+                    double currentTP = OrderTakeProfit();
+                    // For BUY positions, only update if no TP or new TP is better
+                    if(currentTP == 0 || signal.price > currentTP) {
+                        shouldModifyTP = true;
+                        Logger.Info(StringFormat("Will modify BUY TP from %.5f to %.5f", 
+                            currentTP, signal.price));
+                    } else {
+                        Logger.Debug(StringFormat(
+                            "Skipping TP update - Current: %.5f better than signal: %.5f",
+                            currentTP, signal.price));
+                    }
+                }
+                else if(OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH) {
+                    double currentTP = OrderTakeProfit();
+                    // For SELL positions, only update if no TP or new TP is better
+                    if(currentTP == 0 || signal.price < currentTP) {
+                        shouldModifyTP = true;
+                        Logger.Info(StringFormat("Will modify SELL TP from %.5f to %.5f", 
+                            currentTP, signal.price));
+                    } else {
+                        Logger.Debug(StringFormat(
+                            "Skipping TP update - Current: %.5f better than signal: %.5f",
+                            currentTP, signal.price));
+                    }
+                }
+                
+                if(shouldModifyTP) {
                     bool tpModified = OrderModify(OrderTicket(), 
                         OrderOpenPrice(), 
                         OrderStopLoss(), 
-                        signal.price,  // Use signal.price instead of ohlcv.close
+                        signal.price,  // Use signal price as TP
                         0);
                         
                     if(tpModified) {
-                        Logger.Info(StringFormat("Modified BUY position TP to %.5f", signal.price));
+                        Logger.Info(StringFormat(
+                            "Modified Take Profit:" +
+                            "\nTicket: %d" +
+                            "\nType: %s" +
+                            "\nNew TP: %.5f",
+                            OrderTicket(),
+                            OrderType() == OP_BUY ? "BUY" : "SELL",
+                            signal.price));
+                    } else {
+                        int error = GetLastError();
+                        Logger.Error(StringFormat(
+                            "Failed to modify Take Profit to %.5f - Error: %d (%s)",
+                            signal.price, error, ErrorDescription(error)));
+                        
+                        // Log additional context for troubleshooting
+                        Logger.Debug(StringFormat(
+                            "Order details:" +
+                            "\nTicket: %d" +
+                            "\nType: %s" +
+                            "\nOpen Price: %.5f" +
+                            "\nCurrent TP: %.5f" +
+                            "\nAttempted TP: %.5f" +
+                            "\nCurrent SL: %.5f" +
+                            "\nSpread: %.5f",
+                            OrderTicket(),
+                            OrderType() == OP_BUY ? "BUY" : "SELL",
+                            OrderOpenPrice(),
+                            OrderTakeProfit(),
+                            signal.price,
+                            OrderStopLoss(),
+                            MarketInfo(OrderSymbol(), MODE_SPREAD) * MarketInfo(OrderSymbol(), MODE_POINT)));
                     }
-                    shouldClose = true;
-                }
-                
-                if(shouldClose) {
-                    ClosePosition(OrderTicket(), 
-                        StringFormat("Exit Signal: %s", 
-                            signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
                 }
             }
         }

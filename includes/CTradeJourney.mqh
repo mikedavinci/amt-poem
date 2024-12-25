@@ -253,22 +253,77 @@ void ProcessSignals() {
     if(response == "") return;
 
     SignalData signal;
+    Logger.Info("Starting signal processing...");
+    
     if(ParseSignal(response, signal)) {
+        Logger.Info(StringFormat("Signal parsed successfully:" +
+            "\nTicker: %s" +
+            "\nSignal Type: %s" +
+            "\nPrice: %.5f" +
+            "\nPattern: %s" +
+            "\nIs Exit: %s" +
+            "\nExit Type: %s",
+            signal.ticker,
+            signal.signal == SIGNAL_BUY ? "BUY" : 
+                signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
+            signal.price,
+            signal.pattern,
+            signal.isExit ? "Yes" : "No",
+            signal.isExit ? (signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH") : "N/A"
+        ));
+
         if(ValidateSignal(signal)) {
-            // Set instrument type before any processing
             signal.instrumentType = m_symbolInfo.IsCryptoPair() ?
                 INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
                 
             // Handle exit signals first
             if(signal.isExit) {
+                Logger.Info(StringFormat(
+                    "Processing EXIT signal:" +
+                    "\nExit Type: %s" +
+                    "\nPrice: %.5f" +
+                    "\nTicker: %s" +
+                    "\nTP1: %.5f" +
+                    "\nPattern: %s",
+                    signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+                    signal.price,
+                    signal.ticker,
+                    signal.tp1,
+                    signal.pattern
+                ));
+
                 if(m_tradeManager != NULL) {
                     m_tradeManager.ProcessExitSignal(signal);
+                } else {
+                    Logger.Error("Trade manager is NULL - cannot process exit signal");
                 }
             } else {
-                // Regular signal processing
+                Logger.Info(StringFormat(
+                    "Processing ENTRY signal:" +
+                    "\nDirection: %s" +
+                    "\nPrice: %.5f" +
+                    "\nTP1: %.5f" +
+                    "\nSL2: %.5f",
+                    signal.signal == SIGNAL_BUY ? "BUY" : "SELL",
+                    signal.price,
+                    signal.tp1,
+                    signal.sl2
+                ));
                 ExecuteSignal(signal);
             }
+        } else {
+            Logger.Warning(StringFormat(
+                "Signal validation failed:" +
+                "\nTicker: %s" +
+                "\nTimestamp: %s" +
+                "\nLast Signal: %s",
+                signal.ticker,
+                TimeToString(signal.timestamp),
+                TimeToString(m_lastSignalTimestamp)
+            ));
         }
+    } else {
+        Logger.Warning("Failed to parse signal from response");
     }
 }
 
@@ -522,14 +577,30 @@ bool ParseSignal(string response, SignalData &signal) {
                 signal.isExit = true;
                 signal.exitType = EXIT_BEARISH;
                 signal.tp1 = signal.price;  // Use current price as take profit
-                Logger.Info(StringFormat("Exit signal detected - Setting TP1 to close price: %.5f", signal.price));
+                Logger.Info(StringFormat("Exit signal parsed:" +
+                  "\nType: Bearish" +
+                  "\nPrice: %.5f" +
+                  "\nPattern: %s" +
+                  "\nTicker: %s",
+                  signal.price,
+                  alertValue,
+                  signal.ticker));
 
             }
             else if(StringFind(alertValue, "ExitsBullish Exit") >= 0 || StringFind(alertValue, "Exits Bullish Exit") >= 0) {
                 signal.isExit = true;
                 signal.exitType = EXIT_BULLISH;
                 signal.tp1 = signal.price;  // Use current price as take profit
-                Logger.Info(StringFormat("Exit signal detected - Setting TP1 to close price: %.5f", signal.price));
+                Logger.Info(StringFormat(
+                  "Exit signal parsed:" +
+                  "\nType: Bullish" +
+                  "\nPrice: %.5f" +
+                  "\nPattern: %s" +
+                  "\nTicker: %s",
+                  signal.price,
+                  alertValue,
+                  signal.ticker
+              ));
             }
             
             signal.pattern = alertValue;
@@ -705,26 +776,72 @@ datetime ParseTimestamp(string rawTimestamp, bool &success) {
     return result;
 }
 
-    bool ValidateSignal(const SignalData& signal) {
-        if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
-            Logger.Error(StringFormat(
-                "Symbol mismatch in ValidateSignal - Current: %s, Signal: %s, MT4: %s",
-                m_currentSymbol, signal.ticker, Symbol()));
-            return false;
-        }
+bool ValidateSignal(const SignalData& signal) {
+    Logger.Info(StringFormat(
+        "Validating signal:" +
+        "\nCurrent Symbol: %s" +
+        "\nSignal Symbol: %s" +
+        "\nMT4 Symbol: %s" +
+        "\nSignal Timestamp: %s" +
+        "\nLast Signal Time: %s" +
+        "\nSignal Price: %.5f" +
+        "\nIs Exit: %s",
+        m_currentSymbol,
+        signal.ticker,
+        Symbol(),
+        TimeToString(signal.timestamp),
+        TimeToString(m_lastSignalTimestamp),
+        signal.price,
+        signal.isExit ? "Yes" : "No"
+    ));
 
-        if(signal.timestamp == m_lastSignalTimestamp || signal.timestamp == 0) {
-            Logger.Debug("Duplicate or invalid signal timestamp - skipping");
-            return false;
-        }
-
-        if(signal.price <= 0) {
-            Logger.Error("Invalid signal price");
-            return false;
-        }
-
-        return true;
+    if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in ValidateSignal - Current: %s, Signal: %s, MT4: %s",
+            m_currentSymbol, signal.ticker, Symbol()));
+        return false;
     }
+
+    if(signal.timestamp == m_lastSignalTimestamp || signal.timestamp == 0) {
+        Logger.Debug(StringFormat(
+            "Signal timestamp validation failed:" +
+            "\nSignal Time: %s" +
+            "\nLast Signal: %s",
+            TimeToString(signal.timestamp),
+            TimeToString(m_lastSignalTimestamp)
+        ));
+        return false;
+    }
+
+    if(signal.price <= 0) {
+        Logger.Error(StringFormat(
+            "Invalid signal price: %.5f",
+            signal.price));
+        return false;
+    }
+
+    // For exit signals, validate TP values
+    if(signal.isExit) {
+        Logger.Info(StringFormat(
+            "Validating exit signal values:" +
+            "\nExit Type: %s" +
+            "\nPrice: %.5f" +
+            "\nTP1: %.5f",
+            signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+            signal.price,
+            signal.tp1
+        ));
+        
+        // Make sure TP is set for exit signals
+        if(signal.tp1 <= 0) {
+            Logger.Error("Exit signal has invalid TP1 value");
+            return false;
+        }
+    }
+
+    Logger.Info("Signal validation passed");
+    return true;
+}
 
 
     //+------------------------------------------------------------------+
