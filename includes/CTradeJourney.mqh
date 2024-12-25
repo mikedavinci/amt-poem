@@ -83,6 +83,19 @@ public:
         }
     }
 
+    void ClosePosition(int ticket, string reason = "") {
+    if(m_currentSymbol != Symbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in ClosePosition - Current: %s, MT4: %s",
+            m_currentSymbol, Symbol()));
+        return;
+    }
+
+    if(m_tradeManager != NULL) {
+        m_tradeManager.ClosePosition(ticket, reason);
+    }
+}
+
     bool Initialize() {
         // Validate symbol hasn't changed
         if(m_currentSymbol != Symbol()) {
@@ -182,7 +195,7 @@ public:
         }
     }
 
-    void ProcessSignals() {
+void ProcessSignals() {
     if(m_currentSymbol != Symbol()) return;
 
     string response = FetchSignals();
@@ -191,13 +204,17 @@ public:
     SignalData signal;
     if(ParseSignal(response, signal)) {
         if(ValidateSignal(signal)) {
+            // Set instrument type before any processing
+            signal.instrumentType = m_symbolInfo.IsCryptoPair() ?
+                INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
+                
             // Handle exit signals first
             if(signal.isExit) {
-                m_tradeManager.ProcessExitSignal(signal);
+                if(m_tradeManager != NULL) {
+                    m_tradeManager.ProcessExitSignal(signal);
+                }
             } else {
                 // Regular signal processing
-                signal.instrumentType = m_symbolInfo.IsCryptoPair() ?
-                    INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
                 ExecuteSignal(signal);
             }
         }
@@ -205,135 +222,99 @@ public:
 }
 
 private:
-    void ProcessExitSignal(const SignalData& signal) {
-        if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
-            Logger.Error(StringFormat(
-                "Symbol mismatch in ProcessExitSignal - Current: %s, Signal: %s, MT4: %s",
-                m_currentSymbol, signal.ticker, Symbol()));
-            return;
-        }
-
-        for(int i = OrdersTotal() - 1; i >= 0; i--) {
-            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                if(OrderSymbol() == m_currentSymbol) {
-                    bool shouldClose = false;
-                    
-                    if(OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) {
-                    Logger.Debug(StringFormat(
-                        "Closing BUY position at TP: %.5f (Bullish Exit)",
-                        signal.price));
-                    ClosePosition(OrderTicket(), "Exit Signal: Bullish");
-                    }
-                    else if(OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH) {
-                    Logger.Debug(StringFormat(
-                        "Closing SELL position at TP: %.5f (Bearish Exit)",
-                        signal.price));
-                    ClosePosition(OrderTicket(), "Exit Signal: Bearish");
-                }
-                    
-                    if(shouldClose) {
-                        m_tradeManager.ClosePosition(OrderTicket(), 
-                            StringFormat("Exit Signal: %s", 
-                                signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
-                    }
-                }
-            }
-        }
+void ExecuteSignal(const SignalData& signal) {
+    if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in ExecuteSignal - Current: %s, Signal: %s, MT4: %s",
+            m_currentSymbol, signal.ticker, Symbol()));
+        return;
     }
 
-    void ExecuteSignal(const SignalData& signal) {
-        if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
-            Logger.Error(StringFormat(
-                "Symbol mismatch in ExecuteSignal - Current: %s, Signal: %s, MT4: %s",
-                m_currentSymbol, signal.ticker, Symbol()));
-            return;
-        }
-
-        string signalDirection;
-        switch(signal.signal) {
-            case SIGNAL_BUY:
-                signalDirection = "BUY";
-                Logger.Debug("Signal validated as BUY");
-                break;
-            case SIGNAL_SELL:
-                signalDirection = "SELL";
-                Logger.Debug("Signal validated as SELL");
-                break;
-            default:
-                signalDirection = "NEUTRAL";
-                Logger.Debug("Signal defaulted to NEUTRAL");
-                break;
-        }
-
-        Logger.Debug(StringFormat("Signal details - Enum value: %d, Direction: %s, Price: %.5f",
-                     signal.signal, signalDirection, signal.price));
-
-        int orderType = (signal.signal == SIGNAL_BUY) ? OP_BUY : OP_SELL;
-        double stopLoss;
-        if(signal.sl2 > 0) {
-            stopLoss = signal.sl2;
-            Logger.Debug(StringFormat("Using SL2 from API: %.5f", stopLoss));
-        } else {
-            stopLoss = m_symbolInfo.CalculateStopLoss(orderType, signal.price);
-            Logger.Debug(StringFormat("Using calculated Stop Loss: %.5f", stopLoss));
-        }
-
-        double riskPercent = m_symbolInfo.IsCryptoPair() ?
-            CRYPTO_STOP_PERCENT : DEFAULT_RISK_PERCENT;
-        m_riskManager.SetRiskPercent(riskPercent);
-        Logger.Debug(StringFormat("Using Risk Percent: %.2f%%", riskPercent));
-
-        double lots = m_riskManager.CalculatePositionSize(signal.price, stopLoss, orderType);
-        Logger.Debug(StringFormat("Calculated Position Size: %.2f lots", lots));
-
-        if(lots <= 0) {
-            Logger.Error(StringFormat("Invalid position size calculated: %.2f", lots));
-            return;
-        }
-
-        string tradeComment = StringFormat("TJ:%s:%s", signalDirection, signal.pattern);
-        tradeComment = StringSubstr(tradeComment, 0, 31);
-        Logger.Debug(StringFormat("Trade comment prepared: '%s'", tradeComment));
-
-        bool success = false;
-
-        switch(signal.signal) {
-          case SIGNAL_BUY:
-              Logger.Debug(StringFormat("Executing BUY order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
-                  lots, stopLoss, signal.tp1));
-              success = m_tradeManager.OpenBuyPosition(lots, stopLoss, signal.tp1, tradeComment);
-              break;
-
-          case SIGNAL_SELL:
-              Logger.Debug(StringFormat("Executing SELL order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
-                  lots, stopLoss, signal.tp1));
-              success = m_tradeManager.OpenSellPosition(lots, stopLoss, signal.tp1, tradeComment);
-              break;
-
-            default:
-                Logger.Warning(StringFormat("Invalid signal type (%d) - No trade executed", signal.signal));
-                return;
-        }
-
-        if(success) {
-            m_lastSignalTimestamp = signal.timestamp;
-            Logger.Trade(StringFormat(
-                "Position successfully executed:" +
-                "\nDirection: %s" +
-                "\nLots: %.2f" +
-                "\nEntry: %.5f" +
-                "\nStop Loss: %.5f" +
-                "\nPattern: %s" +
-                "\nSignal Value: %d",
-                signalDirection,
-                lots,
-                signal.price,
-                stopLoss,
-                signal.pattern,
-                signal.signal
-            ));
-        }
+    string signalDirection;
+    switch(signal.signal) {
+        case SIGNAL_BUY:
+            signalDirection = "BUY";
+            Logger.Debug("Signal validated as BUY");
+            break;
+        case SIGNAL_SELL:
+            signalDirection = "SELL";
+            Logger.Debug("Signal validated as SELL");
+            break;
+        default:
+            signalDirection = "NEUTRAL";
+            Logger.Debug("Signal defaulted to NEUTRAL");
+            break;
     }
+
+    Logger.Debug(StringFormat("Signal details - Enum value: %d, Direction: %s, Price: %.5f",
+                 signal.signal, signalDirection, signal.price));
+
+    int orderType = (signal.signal == SIGNAL_BUY) ? OP_BUY : OP_SELL;
+    double stopLoss;
+    if(signal.sl2 > 0) {
+        stopLoss = signal.sl2;
+        Logger.Debug(StringFormat("Using SL2 from API: %.5f", stopLoss));
+    } else {
+        stopLoss = m_symbolInfo.CalculateStopLoss(orderType, signal.price);
+        Logger.Debug(StringFormat("Using calculated Stop Loss: %.5f", stopLoss));
+    }
+
+    double riskPercent = m_symbolInfo.IsCryptoPair() ?
+        CRYPTO_STOP_PERCENT : DEFAULT_RISK_PERCENT;
+    m_riskManager.SetRiskPercent(riskPercent);
+    Logger.Debug(StringFormat("Using Risk Percent: %.2f%%", riskPercent));
+
+    double lots = m_riskManager.CalculatePositionSize(signal.price, stopLoss, orderType);
+    Logger.Debug(StringFormat("Calculated Position Size: %.2f lots", lots));
+
+    if(lots <= 0) {
+        Logger.Error(StringFormat("Invalid position size calculated: %.2f", lots));
+        return;
+    }
+
+    string tradeComment = StringFormat("TJ:%s:%s", signalDirection, signal.pattern);
+    tradeComment = StringSubstr(tradeComment, 0, 31);
+    Logger.Debug(StringFormat("Trade comment prepared: '%s'", tradeComment));
+
+    bool success = false;
+
+    switch(signal.signal) {
+        case SIGNAL_BUY:
+            Logger.Debug(StringFormat("Executing BUY order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
+                lots, stopLoss, signal.tp1));
+            success = m_tradeManager.OpenBuyPosition(lots, stopLoss, signal.tp1, tradeComment, signal);
+            break;
+
+        case SIGNAL_SELL:
+            Logger.Debug(StringFormat("Executing SELL order - Lots: %.2f, Stop Loss: %.5f, Take Profit: %.5f", 
+                lots, stopLoss, signal.tp1));
+            success = m_tradeManager.OpenSellPosition(lots, stopLoss, signal.tp1, tradeComment, signal);
+            break;
+
+        default:
+            Logger.Warning(StringFormat("Invalid signal type (%d) - No trade executed", signal.signal));
+            return;
+    }
+
+    if(success) {
+        m_lastSignalTimestamp = signal.timestamp;
+        Logger.Trade(StringFormat(
+            "Position successfully executed:" +
+            "\nDirection: %s" +
+            "\nLots: %.2f" +
+            "\nEntry: %.5f" +
+            "\nStop Loss: %.5f" +
+            "\nPattern: %s" +
+            "\nSignal Value: %d",
+            signalDirection,
+            lots,
+            signal.price,
+            stopLoss,
+            signal.pattern,
+            signal.signal
+        ));
+    }
+}
 
     string FetchSignals() {
         if(m_currentSymbol != Symbol()) {

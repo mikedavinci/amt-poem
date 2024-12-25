@@ -173,7 +173,7 @@ double GetCoordinatedStopDistance(double currentPrice, double entryPrice, int or
 }
 
 bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
-                       double tp, string comment) {
+                       double tp, string comment, const SignalData& signal) {
     int ticket = -1;
     int attempts = 0;
     bool success = false;
@@ -485,10 +485,55 @@ public:
         return false;
     }
 
+void ProcessExitSignal(const SignalData& signal) {
+        // Validate symbol
+        if(m_symbolInfo.GetSymbol() != Symbol()) {
+            Logger.Error(StringFormat(
+                "Symbol mismatch in ProcessExitSignal - Expected: %s, Got: %s",
+                Symbol(), m_symbolInfo.GetSymbol()));
+            return;
+        }
+
+        if(!CanTrade()) return;
+
+        for(int i = OrdersTotal() - 1; i >= 0; i--) {
+            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    bool shouldClose = false;
+                    
+                    if(OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) {
+                        Logger.Debug(StringFormat(
+                            "Closing BUY position at TP: %.5f (Bullish Exit)",
+                            signal.price));
+                        shouldClose = true;
+                    }
+                    else if(OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH) {
+                        Logger.Debug(StringFormat(
+                            "Closing SELL position at TP: %.5f (Bearish Exit)",
+                            signal.price));
+                        shouldClose = true;
+                    }
+                    
+                    if(shouldClose) {
+                        ClosePosition(OrderTicket(), 
+                            StringFormat("Exit Signal: %s", 
+                                signal.exitType == EXIT_BEARISH ? "Bearish" : "Bullish"));
+                    }
+                }
+            }
+        }
+    }
+    
+
     // Trade Execution Methods
-    bool OpenBuyPosition(double lots, double sl, double tp = 0, string comment = "") {
-        
-         // Validate symbol
+bool OpenBuyPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
+
+     if(!m_symbolInfo || !m_riskManager) {
+        Logger.Error("Dependencies not initialized in OpenBuyPosition");
+        return false;
+    }
+
+        // Validate symbol
         if(m_symbolInfo.GetSymbol() != Symbol()) {
             Logger.Error(StringFormat(
                 "Symbol mismatch in OpenBuyPosition - Expected: %s, Got: %s",
@@ -506,14 +551,13 @@ public:
             m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
         ));
 
-
         if(!CanOpenNewPosition(SIGNAL_BUY)) {
-                Logger.Warning(StringFormat(
-                    "Buy position rejected - Awaiting opposite signal after %s position stop loss",
-                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
-                ));
-                return false;
-            }
+            Logger.Warning(StringFormat(
+                "Buy position rejected - Awaiting opposite signal after %s position stop loss",
+                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+            ));
+            return false;
+        }
 
         // Check for existing buy position
         if(HasOpenPositionInDirection(SIGNAL_BUY)) {
@@ -535,10 +579,16 @@ public:
             return false;
         }
 
-        return ExecuteMarketOrder(OP_BUY, lots, price, sl, tp, comment);
+        return ExecuteMarketOrder(OP_BUY, lots, signal.price, sl, tp, comment, signal);
     }
 
-    bool OpenSellPosition(double lots, double sl, double tp = 0, string comment = "") {
+bool OpenSellPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
+
+    if(!m_symbolInfo || !m_riskManager) {
+        Logger.Error("Dependencies not initialized in OpenSellPosition");
+        return false;
+    }
+    
 
         // Validate symbol
         if(m_symbolInfo.GetSymbol() != Symbol()) {
@@ -548,19 +598,19 @@ public:
             return false;
         }
 
-    if(!CanTrade()) return false;
-    
+        if(!CanTrade()) return false;
+        
         Logger.Debug(StringFormat(
-            "Sell Position Request:" +   // Fixed from "Buy" to "Sell"
+            "Sell Position Request:" +
             "\nAwaiting Opposite: %s" +
             "\nLast Closed Direction: %s",
             m_awaitingOppositeSignal ? "Yes" : "No",
             m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
         ));
 
-        if(!CanOpenNewPosition(SIGNAL_SELL)) {  // Fixed from SIGNAL_BUY to SIGNAL_SELL
+        if(!CanOpenNewPosition(SIGNAL_SELL)) {
             Logger.Warning(StringFormat(
-                "Sell position rejected - Awaiting opposite signal after %s position stop loss",  // Fixed message
+                "Sell position rejected - Awaiting opposite signal after %s position stop loss",
                 m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
             ));
             return false;
@@ -586,7 +636,7 @@ public:
             return false;
         }
 
-        return ExecuteMarketOrder(OP_SELL, lots, price, sl, tp, comment);
+        return ExecuteMarketOrder(OP_SELL, lots, signal.price, sl, tp, comment, signal);
     }
 
     bool ClosePosition(int ticket, string reason = "") {
