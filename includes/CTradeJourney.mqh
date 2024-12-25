@@ -16,35 +16,65 @@ private:
     datetime m_lastCheck;
     datetime m_lastSignalTimestamp;
     string m_currentSymbol;
+    datetime m_lastDebugTime;
 
     // Moving periodic checks to private method
-    void PerformPeriodicChecks() {
+void PerformPeriodicChecks() {
+    static datetime lastPeriodicCheck = 0;
+    datetime currentTime = TimeCurrent();
+    
+    // Only run checks and load values every 60 seconds
+    if(currentTime - lastPeriodicCheck >= 60) {
         if(m_currentSymbol != Symbol()) return;  // Symbol validation
         
-        static datetime lastCheck = 0;
-        datetime currentTime = TimeCurrent();
-
+        datetime lastCheck = LoadLastCheck();
         if(currentTime - lastCheck >= RISK_CHECK_INTERVAL) {
             if(!m_riskManager.IsMarginSafe()) {
                 Logger.Warning("Margin level below safe threshold for " + m_currentSymbol);
             }
-
+            
             string liquidity = m_sessionManager.GetLiquidityLevel();
-            lastCheck = currentTime;
+            SaveLastCheck(currentTime);
         }
+        
+        lastPeriodicCheck = currentTime;
+    }
+}
+
+bool IsTimeToCheck() {
+    static datetime lastDebugOutput = 0;
+    datetime currentTime = TimeCurrent();
+    datetime lastSignalCheck = LoadLastSignal();
+
+    // If no signal time saved, initialize it
+    if(lastSignalCheck <= 0) {
+        SaveLastSignal(currentTime);
+        Logger.Info(StringFormat("[%s] Initialized signal check timer", m_currentSymbol));
+        return false;
     }
 
-    bool IsTimeToCheck() {
-        static datetime lastSignalCheck = 0;
-        datetime currentTime = TimeCurrent();
+    // Check if enough time has passed
+    double timeDiff = double(currentTime - lastSignalCheck);  // Convert to double
+    double timeLeft = double(SIGNAL_CHECK_INTERVAL) - timeDiff;  // Use double for calculation
 
-        if(currentTime - lastSignalCheck < SIGNAL_CHECK_INTERVAL) {
-            return false;
+    if(timeLeft > 0) {
+        // Only log debug every 5 minutes for each symbol
+        if(currentTime - lastDebugOutput >= 300) {
+            Logger.Debug(StringFormat("[%s] Next signal check in %.1f minutes", 
+                m_currentSymbol, 
+                timeLeft/60.0));  // Convert to minutes with decimal precision
+            lastDebugOutput = currentTime;
         }
-
-        lastSignalCheck = currentTime;
-        return true;
+        return false;
     }
+
+    // Time to check - log this event
+    Logger.Info(StringFormat("[%s] Performing signal check", m_currentSymbol));
+    SaveLastSignal(currentTime);
+    return true;
+}
+
+
 
 public:
     CTradeJourney() {
@@ -52,13 +82,35 @@ public:
         m_tradeManager = NULL;
         m_riskManager = NULL;
         m_sessionManager = NULL;
-        m_lastCheck = 0;
-        m_lastSignalTimestamp = 0;
         m_currentSymbol = Symbol();
+        m_lastDebugTime = 0; 
+       // Initialize timestamps
+    datetime currentTime = TimeCurrent();
+     // Only initialize if not already set
+    if(LoadLastCheck() <= 0) {
+        SaveLastCheck(currentTime);
+        Logger.Info(StringFormat("[%s] Initialized LastCheck to %s", 
+            m_currentSymbol, TimeToString(currentTime)));
     }
+    
+    if(LoadLastSignal() <= 0) {
+        SaveLastSignal(currentTime);
+        Logger.Info(StringFormat("[%s] Initialized LastSignal to %s", 
+            m_currentSymbol, TimeToString(currentTime)));
+    }
+}
 
     ~CTradeJourney() {
         Cleanup();
+    }
+
+     void CleanupGlobalVars() {
+        // Delete saved timestamps for this symbol
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_currentSymbol + "_";
+        GlobalVariableDel(symbolPrefix + "LAST_CHECK");
+        GlobalVariableDel(symbolPrefix + "LAST_SIGNAL");
+        
+        Logger.Debug(StringFormat("[%s] Cleaned up global variables", m_currentSymbol));
     }
 
     void Cleanup() {
@@ -149,7 +201,6 @@ public:
             MAX_ACCOUNT_RISK,
             ENABLE_PROFIT_PROTECTION ? "Enabled" : "Disabled"
         ));
-
         return true;
     }
 
@@ -193,7 +244,7 @@ public:
                 lastCheck = TimeCurrent();
             }
         }
-    }
+      }
 
 void ProcessSignals() {
     if(m_currentSymbol != Symbol()) return;
@@ -222,6 +273,50 @@ void ProcessSignals() {
 }
 
 private:
+
+    // Add these helper functions
+    void SaveLastCheck(datetime time) {
+    string varName = GLOBAL_VAR_PREFIX + m_currentSymbol + "_LAST_CHECK";
+    GlobalVariableSet(varName, (double)time);
+    m_lastCheck = time;
+    Logger.Debug(StringFormat("[%s] Saved LastCheck: %s", 
+        m_currentSymbol, TimeToString(time)));
+}
+
+void SaveLastSignal(datetime time) {
+    string varName = GLOBAL_VAR_PREFIX + m_currentSymbol + "_LAST_SIGNAL";
+    GlobalVariableSet(varName, (double)time);
+    m_lastSignalTimestamp = time;
+    Logger.Debug(StringFormat("[%s] Saved LastSignal: %s", 
+        m_currentSymbol, TimeToString(time)));
+}
+
+datetime LoadLastCheck() {
+    string varName = GLOBAL_VAR_PREFIX + m_currentSymbol + "_LAST_CHECK";
+    if(GlobalVariableCheck(varName)) {
+        datetime time = (datetime)GlobalVariableGet(varName);
+        static datetime lastDebugOutput = 0;
+        datetime currentTime = TimeCurrent();
+        
+        // Only log every 60 seconds
+        if(currentTime - lastDebugOutput >= 60) {
+            Logger.Debug(StringFormat("[%s] Loaded LastCheck: %s", 
+                m_currentSymbol, TimeToString(time)));
+            lastDebugOutput = currentTime;
+        }
+        return time;
+    }
+    return 0;
+}
+
+datetime LoadLastSignal() {
+    string varName = GLOBAL_VAR_PREFIX + m_currentSymbol + "_LAST_SIGNAL";
+    if(GlobalVariableCheck(varName)) {
+        return (datetime)GlobalVariableGet(varName);
+    }
+    return 0;  // No logging for simple loads
+}
+
 void ExecuteSignal(const SignalData& signal) {
     if(m_currentSymbol != Symbol() || m_currentSymbol != signal.ticker) {
         Logger.Error(StringFormat(

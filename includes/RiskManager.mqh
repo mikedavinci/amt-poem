@@ -67,23 +67,14 @@ private:
 public:
 // Calculate monetary risk for a position
 double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
+    static datetime lastLog = 0;
+    datetime currentTime = TimeCurrent();
+    
     if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) return 0;
     
     double stopDistance = MathAbs(entryPrice - stopLoss);
-    
-    // Log risk calculation details
-    Logger.Debug(StringFormat(
-        "Calculating Position Risk:" +
-        "\nDirection: %s" +
-        "\nLots: %.2f" +
-        "\nEntry: %.5f" +
-        "\nStop Loss: %.5f" +
-        "\nStop Distance: %.5f",
-        orderType == OP_BUY ? "BUY" : "SELL",
-        lots, entryPrice, stopLoss, stopDistance
-    ));
-    
     double riskAmount;
+    
     if(m_symbolInfo.IsCryptoPair()) {
         riskAmount = stopDistance * lots * m_symbolInfo.GetContractSize();
     } else {
@@ -96,6 +87,20 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
         }
         
         riskAmount = (stopDistance / point) * tickValue * lots;
+    }
+    
+    // Log only every 60 seconds
+    if(currentTime - lastLog >= 60) {
+        Logger.Debug(StringFormat(
+            "Risk Calculation:" +
+            "\nDirection: %s" +
+            "\nLots: %.2f" +
+            "\nStop Distance: %.5f" +
+            "\nRisk Amount: %.2f",
+            orderType == OP_BUY ? "BUY" : "SELL",
+            lots, stopDistance, riskAmount
+        ));
+        lastLog = currentTime;
     }
     
     return riskAmount;
@@ -132,6 +137,12 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
     CRiskManager(CSymbolInfo* symbolInfo, double riskPercent = DEFAULT_RISK_PERCENT,
                      double maxAccountRisk = DEFAULT_RISK_PERCENT * 3,
                      double marginBuffer = 50) {
+
+            if(AccountBalance() <= 0) {
+                Logger.Error("Invalid account balance - check account connection");
+                ExpertRemove();
+                return;
+            }
 
             // Validate symbol info pointer
             if(symbolInfo == NULL) {
@@ -365,6 +376,9 @@ double CalculatePositionSize(double entryPrice, double stopLoss, int orderType) 
     
     // Calculate total account risk from all open positions
 double CalculateTotalAccountRisk() {
+    static datetime lastDetailedLog = 0;
+    datetime currentTime = TimeCurrent();
+    
     double totalRisk = 0;
     int positions = 0;
     
@@ -376,18 +390,23 @@ double CalculateTotalAccountRisk() {
                                 OrderOpenPrice(), OrderStopLoss(), OrderType());
                 totalRisk += posRisk;
                 
-                Logger.Debug(StringFormat(
-                    "Position Risk Details [%d]:" +
-                    "\nDirection: %s" +
-                    "\nLots: %.2f" +
-                    "\nRisk Amount: %.2f" +
-                    "\nRunning Total: %.2f",
-                    positions,
-                    OrderType() == OP_BUY ? "BUY" : "SELL",
-                    OrderLots(),
-                    posRisk,
-                    totalRisk
-                ));
+                // Log details only every 60 seconds
+                if(currentTime - lastDetailedLog >= 60) {
+                    Logger.Debug(StringFormat(
+                        "Position Risk Details [%d/%d]:" +
+                        "\nDirection: %s" +
+                        "\nLots: %.2f" +
+                        "\nRisk Amount: %.2f" +
+                        "\nTotal Risk: %.2f",
+                        positions,
+                        OrdersTotal(),
+                        OrderType() == OP_BUY ? "BUY" : "SELL",
+                        OrderLots(),
+                        posRisk,
+                        totalRisk
+                    ));
+                    lastDetailedLog = currentTime;
+                }
             }
         }
     }
@@ -413,43 +432,28 @@ bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int o
     bool isInProfit = (orderType == OP_BUY && currentPrice > entryPrice) ||
                      (orderType == OP_SELL && currentPrice < entryPrice);
 
-    // Log position details
-    Logger.Debug(StringFormat(
-        "Position Details:" +
-        "\nDirection: %s" +
-        "\nEntry Price: %.5f" +
-        "\nCurrent Price: %.5f" +
-        "\nStop Loss: %.5f" +
-        "\nIn Profit: %s",
-        orderType == OP_BUY ? "BUY" : "SELL",
-        entryPrice,
-        currentPrice,
-        stopLoss,
-        isInProfit ? "Yes" : "No"
-    ));
-
     // If in profit, check if stop loss is protective
     if(isInProfit) {
-        // For BUY positions
-        if(orderType == OP_BUY) {
-            // Allow if stop is at or above entry (locking profits)
-            if(stopLoss >= entryPrice) {
-                Logger.Debug("Allowing protective stop for profitable BUY position");
-                return true;
-            }
-        }
-        // For SELL positions
-        else if(orderType == OP_SELL) {
-            // Allow if stop is at or below entry (locking profits)
-            if(stopLoss <= entryPrice) {
-                Logger.Debug("Allowing protective stop for profitable SELL position");
-                return true;
-            }
+        if((orderType == OP_BUY && stopLoss >= entryPrice) ||
+           (orderType == OP_SELL && stopLoss <= entryPrice)) {
+            return true;  // Allow protective stops without risk check
         }
     }
 
-    // If not a protective stop, calculate and validate risk
+    // Calculate and validate risk
     double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss, orderType);
+    
+    // Only log detailed risk info for non-protective stops
+    Logger.Debug(StringFormat(
+        "Risk Validation - %s:" +
+        "\nLots: %.2f" +
+        "\nEntry: %.5f" +
+        "\nStop: %.5f" +
+        "\nRisk: %.2f",
+        orderType == OP_BUY ? "BUY" : "SELL",
+        lots, entryPrice, stopLoss, positionRisk
+    ));
+    
     return ValidateRiskLevels(positionRisk, "Position Risk");
 }
 
@@ -478,27 +482,32 @@ bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int o
     
     // Check margin level safety
     bool IsMarginSafe() {
+        static datetime lastMarginLog = 0;
+        datetime currentTime = TimeCurrent();
+        
         double margin = AccountMargin();
         double equity = AccountEquity();
 
-     //   Logger.Debug(StringFormat(
-     //       "Margin Safety Check:" +
-      //      "\nEquity: %.2f" +
-      //      "\nMargin: %.2f" +
-      //      "\nBuffer Required: %.2f%%",
-     //       equity, margin, m_marginBuffer));
-
         if(margin <= 0) {
-            Logger.Debug("No margin used - position is safe");
-            return true;
+            return true;  // No margin used
         }
 
         double marginLevel = (equity / margin) * 100;
         bool isSafe = marginLevel >= (100 + m_marginBuffer);
 
-       // Logger.Debug(StringFormat(
-       //     "Margin Level: %.2f%% (Minimum required: %.2f%%) - %s",
-       //     marginLevel, (100 + m_marginBuffer), isSafe ? "Safe" : "Unsafe"));
+        // Log status changes or every 5 minutes
+        static bool lastSafeStatus = true;
+        if(lastSafeStatus != isSafe || currentTime - lastMarginLog >= 300) {
+            Logger.Debug(StringFormat(
+                "[%s] Margin Status: %s (Level: %.2f%%, Required: %.2f%%)",
+                m_symbolInfo.GetSymbol(),
+                isSafe ? "Safe" : "UNSAFE",
+                marginLevel,
+                100 + m_marginBuffer
+            ));
+            lastMarginLog = currentTime;
+            lastSafeStatus = isSafe;
+        }
 
         return isSafe;
     }

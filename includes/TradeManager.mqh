@@ -28,7 +28,9 @@ private:
     bool            m_awaitingOppositeSignal; // New flag for signal management
     ENUM_TRADE_SIGNAL m_lastClosedDirection;  // Track last closed position direction
     string          m_currentSymbol;         // Current symbol being traded
-
+    datetime        m_lastCheck;             // Last check timestamp
+    datetime        m_lastSignalTimestamp;   // Last signal timestamp
+    
      string GetSymbol() const {
         return m_symbolInfo ? m_symbolInfo.GetSymbol() : "";
     }
@@ -48,6 +50,78 @@ private:
         }
         return true;
     }
+
+    void SaveTradeState() {
+        if(m_symbolInfo.GetSymbol() != Symbol()) return;
+        
+        string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
+        datetime currentTime = TimeCurrent();  // Get current time explicitly
+        
+        // Add timestamp saves
+        GlobalVariableSet(symbolPrefix + "LAST_CHECK_TIME", (double)currentTime);
+        GlobalVariableSet(symbolPrefix + "LAST_SIGNAL_TIME", (double)m_lastSignalTimestamp);
+        
+        GlobalVariableSet(symbolPrefix + "AWAITING_OPPOSITE", m_awaitingOppositeSignal ? 1 : 0);
+        GlobalVariableSet(symbolPrefix + "LAST_DIRECTION", (double)m_lastClosedDirection);
+        
+        // Save last trade info
+        GlobalVariableSet(symbolPrefix + "LAST_TRADE_TICKET", m_lastTrade.ticket);
+        GlobalVariableSet(symbolPrefix + "LAST_TRADE_TYPE", (double)m_lastTrade.direction);
+        GlobalVariableSet(symbolPrefix + "LAST_TRADE_LOTS", m_lastTrade.lots);
+        GlobalVariableSet(symbolPrefix + "LAST_TRADE_PRICE", m_lastTrade.openPrice);
+        
+        Logger.Debug(StringFormat(
+            "Saved trade state at %s - AwaitingOpposite: %s, LastDirection: %s",
+            TimeToString(currentTime),
+            m_awaitingOppositeSignal ? "Yes" : "No",
+            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"));
+    }
+    
+void LoadTradeState() {
+    if(m_symbolInfo.GetSymbol() != Symbol()) return;
+    
+    string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
+    
+    // Load timestamps with validation
+    if(GlobalVariableCheck(symbolPrefix + "LAST_CHECK_TIME")) {
+        double lastCheckValue = GlobalVariableGet(symbolPrefix + "LAST_CHECK_TIME");
+        if(lastCheckValue > 0) {  // Ensure we don't load epoch time
+            m_lastCheck = (datetime)lastCheckValue;
+        }
+    }
+    
+    if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL_TIME")) {
+        double lastSignalValue = GlobalVariableGet(symbolPrefix + "LAST_SIGNAL_TIME");
+        if(lastSignalValue > 0) {  // Ensure we don't load epoch time
+            m_lastSignalTimestamp = (datetime)lastSignalValue;
+        }
+    }
+    
+    // Load with validation
+    double awaitingValue = GlobalVariableGet(symbolPrefix + "AWAITING_OPPOSITE");
+    if(GlobalVariableCheck(symbolPrefix + "AWAITING_OPPOSITE")) {
+        m_awaitingOppositeSignal = (awaitingValue == 1);
+    }
+    
+    // Load last closed direction
+    double directionValue = GlobalVariableGet(symbolPrefix + "LAST_DIRECTION");
+    if(GlobalVariableCheck(symbolPrefix + "LAST_DIRECTION")) {
+        m_lastClosedDirection = (ENUM_TRADE_SIGNAL)((int)directionValue);
+    }
+        
+    // Load last trade if ticket exists
+    if(GlobalVariableCheck(symbolPrefix + "LAST_TRADE_TICKET")) {
+        m_lastTrade.ticket = (int)GlobalVariableGet(symbolPrefix + "LAST_TRADE_TICKET");
+        m_lastTrade.direction = (ENUM_TRADE_SIGNAL)((int)GlobalVariableGet(symbolPrefix + "LAST_TRADE_TYPE"));
+        m_lastTrade.lots = GlobalVariableGet(symbolPrefix + "LAST_TRADE_LOTS");
+        m_lastTrade.openPrice = GlobalVariableGet(symbolPrefix + "LAST_TRADE_PRICE");
+    }
+        
+    Logger.Debug(StringFormat(
+        "Loaded trade state - LastCheck: %s, LastSignal: %s",
+        TimeToString(m_lastCheck),
+        TimeToString(m_lastSignalTimestamp)));
+}
 
     // Private Methods for Trade Validation
     bool CanOpenNewPosition(ENUM_TRADE_SIGNAL newSignal) {
@@ -469,6 +543,7 @@ public:
           m_maxRetries(maxRetries) {
         m_isTradeAllowed = true;
         m_currentSymbol = m_symbolInfo.GetSymbol();
+        LoadTradeState();
     }
 
     bool HasOpenPositionInDirection(ENUM_TRADE_SIGNAL direction) {
@@ -522,9 +597,8 @@ void ProcessExitSignal(const SignalData& signal) {
                 }
             }
         }
-    }
+}
     
-
     // Trade Execution Methods
 bool OpenBuyPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
 
@@ -579,8 +653,14 @@ bool OpenBuyPosition(double lots, double sl, double tp, string comment, const Si
             return false;
         }
 
-        return ExecuteMarketOrder(OP_BUY, lots, signal.price, sl, tp, comment, signal);
-    }
+        bool result = ExecuteMarketOrder(OP_BUY, lots, signal.price, sl, tp, comment, signal);
+
+        if(result) {
+            SaveTradeState();
+        }
+
+        return result;
+}
 
 bool OpenSellPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
 
@@ -636,10 +716,15 @@ bool OpenSellPosition(double lots, double sl, double tp, string comment, const S
             return false;
         }
 
-        return ExecuteMarketOrder(OP_SELL, lots, signal.price, sl, tp, comment, signal);
-    }
+        bool result = ExecuteMarketOrder(OP_SELL, lots, signal.price, sl, tp, comment, signal);
+        if(result) {
+            SaveTradeState(); 
+        }
 
-    bool ClosePosition(int ticket, string reason = "") {
+        return result;
+}
+
+bool ClosePosition(int ticket, string reason = "") {
     if(m_symbolInfo.GetSymbol() != Symbol()) {
         Logger.Error(StringFormat(
             "Symbol mismatch in ClosePosition - Expected: %s, Got: %s",
@@ -695,11 +780,13 @@ bool OpenSellPosition(double lots, double sl, double tp, string comment, const S
                 m_lastTrade.profit
             ));
         }
+        
+        SaveTradeState(); 
     } else {
         LogTradeError("Order close failed", GetLastError());
     }
 
-    return success;
+    return success;  // Return the result of the close operation
 }
 
     // Position Modification Methods

@@ -44,6 +44,21 @@ extern bool ENABLE_PAPERTRAIL = true;               // Enable external logging
 // Global Variables
 CTradeJourney* g_tradeJourney = NULL;
 
+void GlobalVariableDeleteAll(string prefix) {
+    string name;
+    int i = 0;
+    
+    while(i < GlobalVariablesTotal()) {
+        name = GlobalVariableName(i);
+        if(StringFind(name, prefix) == 0) {  // if name starts with prefix
+            GlobalVariableDel(name);
+            // Don't increment i since deletion shifts the array
+        } else {
+            i++;  // Only increment if we didn't delete
+        }
+    }
+}
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
 //+------------------------------------------------------------------+
@@ -54,21 +69,37 @@ int OnInit() {
     Logger.SetSystemName(SYSTEM_NAME);
     Logger.SetPapertrailHost(PAPERTRAIL_HOST);
 
+    string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
+    // Only delete our own symbol's variables, not all of them
+    GlobalVariableDeleteAll(symbolPrefix);
+
     // Create and initialize trade journey instance
     g_tradeJourney = new CTradeJourney();
     if(!g_tradeJourney.Initialize()) {
-        Logger.Error("Failed to initialize EA");
+        Logger.Error("Failed to initialize EA for " + Symbol());
         return INIT_FAILED;
     }
 
+    Logger.Info(StringFormat("[%s] EA initialized successfully", Symbol()));
     return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
+
+
 void OnDeinit(const int reason) {
+    string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
+
+    // Only delete globals if terminal closing or EA removed
+    if(reason == REASON_REMOVE || reason == REASON_CLOSE) {
+        GlobalVariableDeleteAll(symbolPrefix);
+        Logger.Info("Cleaned up global variables on shutdown");
+    }
+
     if(g_tradeJourney != NULL) {
+        g_tradeJourney.CleanupGlobalVars();
         delete g_tradeJourney;
         g_tradeJourney = NULL;
     }
@@ -79,7 +110,36 @@ void OnDeinit(const int reason) {
 //| Expert tick function                                              |
 //+------------------------------------------------------------------+
 void OnTick() {
+    static datetime lastDebugTime = 0;
+    
     if(g_tradeJourney != NULL) {
+        // Only check state and log periodically (every 300 seconds = 5 minutes)
+        datetime currentTime = TimeCurrent();
+        if(currentTime - lastDebugTime >= 300) {
+            string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
+            
+            // Use safe checks for global variables
+            datetime lastCheck = 0;
+            datetime lastSignal = 0;
+            
+            if(GlobalVariableCheck(symbolPrefix + "LAST_CHECK")) {
+                lastCheck = (datetime)GlobalVariableGet(symbolPrefix + "LAST_CHECK");
+            }
+            if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL")) {
+                lastSignal = (datetime)GlobalVariableGet(symbolPrefix + "LAST_SIGNAL");
+            }
+            
+            Logger.Info(StringFormat(
+                "[%s] EA State - Check: %s, Signal: %s",
+                Symbol(),
+                TimeToString(lastCheck),
+                TimeToString(lastSignal)
+            ));
+            
+            lastDebugTime = currentTime;
+        }
+        
+        // Process tick without extra logging
         g_tradeJourney.OnTick();
     }
 }
@@ -190,9 +250,3 @@ string ErrorDescription(int error_code)
    }
    return(error_string);
 }
-
-
-
-
-
-
