@@ -283,14 +283,23 @@ void ProcessSignals() {
                     "\nExit Type: %s" +
                     "\nPrice: %.5f" +
                     "\nTicker: %s" +
-                    "\nTP1: %.5f" +
+                    "\nTP1: %.5f" +      // Added TP1 to logging
                     "\nPattern: %s",
                     signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
                     signal.price,
                     signal.ticker,
-                    signal.tp1,
+                    signal.tp1,         // Make sure TP1 is logged
                     signal.pattern
                 ));
+
+                // Add validation for TP1
+                if(signal.tp1 <= 0) {
+                    Logger.Warning(StringFormat(
+                        "Exit signal has no valid TP1 - Using price: %.5f",
+                        signal.price
+                    ));
+                    signal.tp1 = signal.price;  // Fallback to price if TP1 not set
+                }
 
                 if(m_tradeManager != NULL) {
                     m_tradeManager.ProcessExitSignal(signal);
@@ -540,6 +549,9 @@ bool ParseSignal(string response, SignalData &signal) {
     signal.price = 0;
     signal.ticker = "";
     signal.pattern = "";
+    signal.isExit = false;       
+    signal.exitType = EXIT_NONE;   
+    signal.tp1 = 0;
 
     string signalStr = response;
     
@@ -550,7 +562,36 @@ bool ParseSignal(string response, SignalData &signal) {
     
     Logger.Debug("Processing signal string: " + signalStr);
 
-      // Extract sl2
+    // First check isExit in JSON
+    string isExitSearch = "\"isExit\":";
+    int isExitPos = StringFind(signalStr, isExitSearch);
+    if(isExitPos != -1) {
+        string isExitValue = StringSubstr(signalStr, 
+            isExitPos + StringLen(isExitSearch), 
+            5);  // Enough chars for "true" or "false"
+        signal.isExit = (StringFind(isExitValue, "true") >= 0);
+        
+        if(signal.isExit) {
+            // Check exitType
+            string exitTypeSearch = "\"exitType\":\"";
+            int exitTypePos = StringFind(signalStr, exitTypeSearch);
+            if(exitTypePos != -1) {
+                int startQuote = exitTypePos + StringLen(exitTypeSearch);
+                int endQuote = StringFind(signalStr, "\"", startQuote);
+                if(endQuote != -1) {
+                    string exitTypeStr = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+                    if(StringCompare(exitTypeStr, "bullish", false) == 0) {
+                        signal.exitType = EXIT_BULLISH;
+                    }
+                    else if(StringCompare(exitTypeStr, "bearish", false) == 0) {
+                        signal.exitType = EXIT_BEARISH;
+                    }
+                }
+            }
+        }
+    }
+
+    // Extract sl2
     string sl2Search = "\"sl2\":";
     int sl2Pos = StringFind(signalStr, sl2Search);
     if(sl2Pos != -1) {
@@ -558,94 +599,27 @@ bool ParseSignal(string response, SignalData &signal) {
         int endValue = StringFind(signalStr, ",", startValue);
         if(endValue != -1) {
             string sl2Str = StringSubstr(signalStr, startValue, endValue - startValue);
+            StringReplace(sl2Str, "\"", ""); // Remove quotes if present
             signal.sl2 = StringToDouble(sl2Str);
             Logger.Debug(StringFormat("Extracted SL2: %.5f", signal.sl2));
         }
     }
 
-    // Parse alert pattern and check for exit signals
-    string alertSearch = "\"alert\":\"";
-    int alertPos = StringFind(signalStr, alertSearch);
-    if(alertPos != -1) {
-        int startQuote = alertPos + StringLen(alertSearch);
-        int endQuote = StringFind(signalStr, "\"", startQuote);
-        if(endQuote != -1) {
-            string alertValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
-            
-            // Check for exit signals
-                if(StringFind(alertValue, "ExitsBearish Exit") >= 0 || StringFind(alertValue, "Exits Bearish Exit") >= 0) {
-                signal.isExit = true;
-                signal.exitType = EXIT_BEARISH;
-                signal.tp1 = signal.price;  // Use current price as take profit
-                Logger.Info(StringFormat("Exit signal parsed:" +
-                  "\nType: Bearish" +
-                  "\nPrice: %.5f" +
-                  "\nPattern: %s" +
-                  "\nTicker: %s",
-                  signal.price,
-                  alertValue,
-                  signal.ticker));
-
-            }
-            else if(StringFind(alertValue, "ExitsBullish Exit") >= 0 || StringFind(alertValue, "Exits Bullish Exit") >= 0) {
-                signal.isExit = true;
-                signal.exitType = EXIT_BULLISH;
-                signal.tp1 = signal.price;  // Use current price as take profit
-                Logger.Info(StringFormat(
-                  "Exit signal parsed:" +
-                  "\nType: Bullish" +
-                  "\nPrice: %.5f" +
-                  "\nPattern: %s" +
-                  "\nTicker: %s",
-                  signal.price,
-                  alertValue,
-                  signal.ticker
-              ));
-            }
-            
-            signal.pattern = alertValue;
+    // Extract TP1 from JSON
+    string tp1Search = "\"tp1\":";
+    int tp1Pos = StringFind(signalStr, tp1Search);
+    if(tp1Pos != -1) {
+        int startValue = tp1Pos + StringLen(tp1Search);
+        int endValue = StringFind(signalStr, ",", startValue);
+        if(endValue != -1) {
+            string tp1Str = StringSubstr(signalStr, startValue, endValue - startValue);
+            StringReplace(tp1Str, "\"", ""); // Remove quotes if present
+            signal.tp1 = StringToDouble(tp1Str);
+            Logger.Debug(StringFormat("Extracted TP1: %.5f", signal.tp1));
         }
     }
 
-    // Extract ticker
-    string tickerSearch = "\"ticker\":\"";
-    int tickerPos = StringFind(signalStr, tickerSearch);
-    if(tickerPos != -1) {
-      int startQuote = tickerPos + StringLen(tickerSearch);
-      int endQuote = StringFind(signalStr, "\"", startQuote);
-      if(endQuote != -1) {
-          string baseTicker = StringSubstr(signalStr, startQuote, endQuote - startQuote);
-          // Add + only for forex pairs, not for crypto
-          signal.ticker = (StringFind(baseTicker, "BTC") >= 0 || 
-                          StringFind(baseTicker, "ETH") >= 0 ||
-                          StringFind(baseTicker, "LTC") >= 0) ? 
-                          baseTicker : baseTicker + "+";
-      }
-    }
-
-    // Extract action
-    string actionSearch = "\"action\":\"";
-    int actionPos = StringFind(signalStr, actionSearch);
-    if(actionPos != -1) {
-        int startQuote = actionPos + StringLen(actionSearch);
-        int endQuote = StringFind(signalStr, "\"", startQuote);
-        if(endQuote != -1) {
-            string actionValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
-            Logger.Debug("Raw action value: " + actionValue);
-            
-            // Clean and compare action
-            if(StringCompare(actionValue, "BUY") == 0) {
-                signal.signal = SIGNAL_BUY;
-                Logger.Debug("Action set to BUY");
-            }
-            else if(StringCompare(actionValue, "SELL") == 0) {
-                signal.signal = SIGNAL_SELL;
-                Logger.Debug("Action set to SELL");
-            }
-        }
-    }
-
-    // Extract price
+    // Extract price and pattern first (needed for exit signals)
     string priceSearch = "\"price\":";
     int pricePos = StringFind(signalStr, priceSearch);
     if(pricePos != -1) {
@@ -658,6 +632,92 @@ bool ParseSignal(string response, SignalData &signal) {
         }
     }
 
+    // Extract pattern and check for exit signals
+    string patternSearch = "\"signalPattern\":\"";
+    int patternPos = StringFind(signalStr, patternSearch);
+    if(patternPos != -1) {
+        int startQuote = patternPos + StringLen(patternSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            signal.pattern = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            
+            // Verify exit signals in pattern
+            if(StringFind(signal.pattern, "ExitsBullish Exit") >= 0 || 
+               StringFind(signal.pattern, "Exits Bullish Exit") >= 0) {
+                signal.isExit = true;
+                signal.exitType = EXIT_BULLISH;
+                
+                // Only set TP1 if not already set
+                if(signal.tp1 == 0) {
+                    signal.tp1 = signal.price;
+                }
+                
+                Logger.Info(StringFormat(
+                    "Bullish Exit Signal:" +
+                    "\nPrice: %.5f" +
+                    "\nTP1: %.5f" +
+                    "\nPattern: %s",
+                    signal.price,
+                    signal.tp1,
+                    signal.pattern
+                ));
+            }
+            else if(StringFind(signal.pattern, "ExitsBearish Exit") >= 0 || 
+                    StringFind(signal.pattern, "Exits Bearish Exit") >= 0) {
+                signal.isExit = true;
+                signal.exitType = EXIT_BEARISH;
+                
+                // Only set TP1 if not already set
+                if(signal.tp1 == 0) {
+                    signal.tp1 = signal.price;
+                }
+                
+                Logger.Info(StringFormat(
+                    "Bearish Exit Signal:" +
+                    "\nPrice: %.5f" +
+                    "\nTP1: %.5f" +
+                    "\nPattern: %s",
+                    signal.price,
+                    signal.tp1,
+                    signal.pattern
+                ));
+            }
+        }
+    }
+
+    // Extract ticker
+    string tickerSearch = "\"ticker\":\"";
+    int tickerPos = StringFind(signalStr, tickerSearch);
+    if(tickerPos != -1) {
+        int startQuote = tickerPos + StringLen(tickerSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string baseTicker = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            signal.ticker = (StringFind(baseTicker, "BTC") >= 0 || 
+                           StringFind(baseTicker, "ETH") >= 0 ||
+                           StringFind(baseTicker, "LTC") >= 0) ? 
+                           baseTicker : baseTicker + "+";
+        }
+    }
+
+    // Extract action
+    string actionSearch = "\"action\":\"";
+    int actionPos = StringFind(signalStr, actionSearch);
+    if(actionPos != -1) {
+        int startQuote = actionPos + StringLen(actionSearch);
+        int endQuote = StringFind(signalStr, "\"", startQuote);
+        if(endQuote != -1) {
+            string actionValue = StringSubstr(signalStr, startQuote, endQuote - startQuote);
+            if(StringCompare(actionValue, "BUY") == 0) {
+                signal.signal = SIGNAL_BUY;
+            }
+            else if(StringCompare(actionValue, "SELL") == 0) {
+                signal.signal = SIGNAL_SELL;
+            }
+        }
+    }
+
+    // Parse timestamp
     string timestampSearch = "\"timestamp\":\"";
     int timestampPos = StringFind(signalStr, timestampSearch);
     if(timestampPos != -1) {
@@ -667,10 +727,7 @@ bool ParseSignal(string response, SignalData &signal) {
             string timestampStr = StringSubstr(signalStr, startQuote, endQuote - startQuote);
             bool parseSuccess = false;
             signal.timestamp = ParseTimestamp(timestampStr, parseSuccess);
-            Logger.Debug(StringFormat("Parsed timestamp: %s -> %s", 
-                timestampStr, 
-                TimeToString(signal.timestamp)));
-
+            
             if(!parseSuccess) {
                 Logger.Error("Failed to parse timestamp: " + timestampStr);
                 return false;
@@ -678,41 +735,37 @@ bool ParseSignal(string response, SignalData &signal) {
         }
     }
 
-    // Extract pattern
-    string patternSearch = "\"signalPattern\":\"";
-    int patternPos = StringFind(signalStr, patternSearch);
-    if(patternPos != -1) {
-        int startQuote = patternPos + StringLen(patternSearch);
-        int endQuote = StringFind(signalStr, "\"", startQuote);
-        if(endQuote != -1) {
-            signal.pattern = StringSubstr(signalStr, startQuote, endQuote - startQuote);
-        }
-    }
-
-    // Log all extracted values
-    Logger.Debug(StringFormat(
-        "Final extracted values:" +
-        "\nTicker: [%s]" +
-        "\nAction: %s" +
+    // Comprehensive logging of final signal state
+    Logger.Info(StringFormat(
+        "Signal parsing complete:" +
+        "\nTicker: %s" +
+        "\nIs Exit: %s" +
+        "\nExit Type: %s" +
+        "\nSignal Type: %s" +
         "\nPrice: %.5f" +
-        "\nPattern: [%s]",
+        "\nTP1: %.5f" +
+        "\nSL2: %.5f" +
+        "\nPattern: %s",
         signal.ticker,
+        signal.isExit ? "Yes" : "No",
+        signal.isExit ? (signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH") : "N/A",
         signal.signal == SIGNAL_BUY ? "BUY" : 
             signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
         signal.price,
+        signal.tp1,
+        signal.sl2,
         signal.pattern
     ));
 
-    // Validate the signal
+    // Validate the signal with exit consideration
     bool validSignal = (
         StringLen(signal.ticker) > 0 && 
         signal.price > 0 && 
-        signal.signal != SIGNAL_NEUTRAL &&
-        StringLen(signal.pattern) > 0
+        (signal.isExit || signal.signal != SIGNAL_NEUTRAL) &&  // Allow exit signals
+        StringLen(signal.pattern) > 0 &&
+        (signal.isExit ? signal.tp1 > 0 : true)  // Require TP1 for exit signals
     );
 
-    Logger.Debug(StringFormat("Signal validation result: %s", validSignal ? "Valid" : "Invalid"));
-    
     return validSignal;
 }
 
