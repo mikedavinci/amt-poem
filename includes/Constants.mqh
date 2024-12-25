@@ -31,7 +31,7 @@
 #define CRYPTO_MARGIN_PERCENT_LTC   0.01     // 1.0%
 
 // Risk Management Constants
-#define DEFAULT_RISK_PERCENT        1.0  
+#define DEFAULT_RISK_PERCENT        3.0  
 #define MAX_POSITIONS_PER_SYMBOL    1
 #define MAX_RETRY_ATTEMPTS          3
 #define DEFAULT_SLIPPAGE           5
@@ -39,7 +39,7 @@
 
 // Regular Stops
 #define FOREX_STOP_PIPS           80
-#define CRYPTO_STOP_PERCENT       8.0
+#define CRYPTO_STOP_PERCENT       4.0
 
 // Emergency Stops
 #define FOREX_EMERGENCY_PIPS      120

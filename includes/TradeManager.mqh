@@ -85,28 +85,37 @@ void LoadTradeState() {
     // Load timestamps with validation
     if(GlobalVariableCheck(symbolPrefix + "LAST_CHECK_TIME")) {
         double lastCheckValue = GlobalVariableGet(symbolPrefix + "LAST_CHECK_TIME");
-        if(lastCheckValue > 0) {  // Ensure we don't load epoch time
+        if(lastCheckValue > 0) {  
             m_lastCheck = (datetime)lastCheckValue;
         }
     }
     
     if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL_TIME")) {
         double lastSignalValue = GlobalVariableGet(symbolPrefix + "LAST_SIGNAL_TIME");
-        if(lastSignalValue > 0) {  // Ensure we don't load epoch time
+        if(lastSignalValue > 0) {  
             m_lastSignalTimestamp = (datetime)lastSignalValue;
         }
     }
     
-    // Load with validation
-    double awaitingValue = GlobalVariableGet(symbolPrefix + "AWAITING_OPPOSITE");
+     // Load awaiting opposite signal state
     if(GlobalVariableCheck(symbolPrefix + "AWAITING_OPPOSITE")) {
-        m_awaitingOppositeSignal = (awaitingValue == 1);
+        m_awaitingOppositeSignal = (GlobalVariableGet(symbolPrefix + "AWAITING_OPPOSITE") == 1);
+        Logger.Debug(StringFormat(
+            "Loaded awaiting opposite signal state: %s",
+            m_awaitingOppositeSignal ? "Yes" : "No"
+        ));
     }
     
     // Load last closed direction
-    double directionValue = GlobalVariableGet(symbolPrefix + "LAST_DIRECTION");
     if(GlobalVariableCheck(symbolPrefix + "LAST_DIRECTION")) {
-        m_lastClosedDirection = (ENUM_TRADE_SIGNAL)((int)directionValue);
+        double directionValue = GlobalVariableGet(symbolPrefix + "LAST_DIRECTION");
+        if(directionValue == SIGNAL_BUY || directionValue == SIGNAL_SELL) {
+            m_lastClosedDirection = (ENUM_TRADE_SIGNAL)((int)directionValue);
+            Logger.Debug(StringFormat(
+                "Loaded last closed direction: %s",
+                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+            ));
+        }
     }
         
     // Load last trade if ticket exists
@@ -118,9 +127,12 @@ void LoadTradeState() {
     }
         
     Logger.Debug(StringFormat(
-        "Loaded trade state - LastCheck: %s, LastSignal: %s",
-        TimeToString(m_lastCheck),
-        TimeToString(m_lastSignalTimestamp)));
+        "Trade state loaded:" +
+        "\nAwaiting Opposite: %s" +
+        "\nLast Direction: %s",
+        m_awaitingOppositeSignal ? "Yes" : "No",
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+    ));
 }
 
     // Private Methods for Trade Validation
@@ -140,19 +152,21 @@ void LoadTradeState() {
         // Only allow if signal is opposite to last closed position
         if(m_lastClosedDirection == SIGNAL_BUY && newSignal == SIGNAL_SELL) {
             m_awaitingOppositeSignal = false;
-            Logger.Info("Opposite signal (SELL) received after BUY stop loss - allowing trade");
+            SaveTradeState();  // Add this to persist state change
+            Logger.Info("Opposite signal (SELL) received after BUY exit - allowing trade");
             return true;
         }
         if(m_lastClosedDirection == SIGNAL_SELL && newSignal == SIGNAL_BUY) {
             m_awaitingOppositeSignal = false;
-            Logger.Info("Opposite signal (BUY) received after SELL stop loss - allowing trade");
+            SaveTradeState();  // Add this to persist state change
+            Logger.Info("Opposite signal (BUY) received after SELL exit - allowing trade");
             return true;
         }
 
         Logger.Warning(StringFormat(
-            "Trade rejected - Awaiting %s signal after %s position stop loss",
+            "Trade rejected - Awaiting %s signal after %s exit",
             m_lastClosedDirection == SIGNAL_BUY ? "SELL" : "BUY",
-            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+            m_lastClosedDirection == SIGNAL_BUY ? "Bullish" : "Bearish"
         ));
         return false;
     }
@@ -561,104 +575,65 @@ public:
     }
 
 void ProcessExitSignal(const SignalData& signal) {
-    Logger.Info(StringFormat("Processing exit signal for %s - Type: %s, TP Price: %.5f", 
-        m_symbolInfo.GetSymbol(),
-        signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
-        signal.price));
+   Logger.Info(StringFormat("Processing exit signal for %s - Type: %s, TP Price: %.5f", 
+       m_symbolInfo.GetSymbol(),
+       signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+       signal.price));
 
-    for(int i = OrdersTotal() - 1; i >= 0; i--) {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                // Check if the exit signal matches position type
-                bool matchingExit = (OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) ||
-                                  (OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH);
-                
-                if(matchingExit) {
-                    double currentTP = OrderTakeProfit();
-                    bool shouldModifyTP = false;
-
-                    // For BUY positions with Bullish exit
-                    if(OrderType() == OP_BUY) {
-                        if(currentTP == 0 || signal.price > currentTP) {
-                            shouldModifyTP = true;
-                            Logger.Info(StringFormat(
-                                "Will modify BUY TP: Current: %.5f, New: %.5f",
-                                currentTP, signal.price));
-                        } else {
-                            Logger.Debug(StringFormat(
-                                "Skipping BUY TP update - Current: %.5f better than signal: %.5f",
-                                currentTP, signal.price));
-                        }
-                    }
-                    // For SELL positions with Bearish exit
-                    else if(OrderType() == OP_SELL) {
-                        if(currentTP == 0 || signal.price < currentTP) {
-                            shouldModifyTP = true;
-                            Logger.Info(StringFormat(
-                                "Will modify SELL TP: Current: %.5f, New: %.5f",
-                                currentTP, signal.price));
-                        } else {
-                            Logger.Debug(StringFormat(
-                                "Skipping SELL TP update - Current: %.5f better than signal: %.5f",
-                                currentTP, signal.price));
-                        }
-                    }
-
-                    if(shouldModifyTP) {
-                        bool tpModified = OrderModify(OrderTicket(), 
-                            OrderOpenPrice(), 
-                            OrderStopLoss(), 
-                            signal.tp1,  
-                            0);
-                            
-                        if(tpModified) {
-                            Logger.Info(StringFormat(
-                                "Successfully modified Take Profit:" +
-                                "\nTicket: %d" +
-                                "\nType: %s" +
-                                "\nOld TP: %.5f" +
-                                "\nNew TP: %.5f",
-                                OrderTicket(),
-                                OrderType() == OP_BUY ? "BUY" : "SELL",
-                                currentTP,
-                                signal.tp1));
-                        } else {
-                            int error = GetLastError();
-                            Logger.Error(StringFormat(
-                                "Failed to modify Take Profit:" +
-                                "\nTicket: %d" +
-                                "\nType: %s" +
-                                "\nCurrent TP: %.5f" +
-                                "\nAttempted TP: %.5f" +
-                                "\nError: %d (%s)" +
-                                "\nBid/Ask: %.5f/%.5f" +
-                                "\nSpread: %.5f pips",
-                                OrderTicket(),
-                                OrderType() == OP_BUY ? "BUY" : "SELL",
-                                currentTP,
-                                signal.price,
-                                error,
-                                ErrorDescription(error),
-                                m_symbolInfo.GetBid(),
-                                m_symbolInfo.GetAsk(),
-                                (m_symbolInfo.GetAsk() - m_symbolInfo.GetBid()) / m_symbolInfo.GetPipSize()
-                            ));
-                        }
-                    }
-                } else {
-                    Logger.Debug(StringFormat(
-                        "Exit signal does not match position:" +
-                        "\nPosition: %s" +
-                        "\nExit Type: %s" +
-                        "\nTicket: %d",
-                        OrderType() == OP_BUY ? "BUY" : "SELL",
-                        signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
-                        OrderTicket()
-                    ));
-                }
-            }
-        }
-    }
+   for(int i = OrdersTotal() - 1; i >= 0; i--) {
+       if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+           if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+               // Check if the exit signal matches position type
+               bool matchingExit = (OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) ||
+                                 (OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH);
+               
+               if(matchingExit) {
+                   // For Bullish Exit - Close BUY positions and wait for SELL
+                   if(signal.exitType == EXIT_BULLISH && OrderType() == OP_BUY) {
+                       if(ClosePosition(OrderTicket(), "Bullish Exit Signal")) {
+                           m_awaitingOppositeSignal = true;
+                           m_lastClosedDirection = SIGNAL_BUY;
+                           Logger.Info(StringFormat(
+                               "Closed BUY position on Bullish Exit:" +
+                               "\nTicket: %d" +
+                               "\nClose Price: %.5f" +
+                               "\nNow awaiting SELL signal",
+                               OrderTicket(),
+                               m_symbolInfo.GetBid()
+                           ));
+                           SaveTradeState();
+                       }
+                   }
+                   // For Bearish Exit - Close SELL positions and wait for BUY
+                   else if(signal.exitType == EXIT_BEARISH && OrderType() == OP_SELL) {
+                       if(ClosePosition(OrderTicket(), "Bearish Exit Signal")) {
+                           m_awaitingOppositeSignal = true;
+                           m_lastClosedDirection = SIGNAL_SELL;
+                           Logger.Info(StringFormat(
+                               "Closed SELL position on Bearish Exit:" +
+                               "\nTicket: %d" +
+                               "\nClose Price: %.5f" +
+                               "\nNow awaiting BUY signal",
+                               OrderTicket(),
+                               m_symbolInfo.GetAsk()
+                           ));
+                           SaveTradeState();
+                       }
+                   }
+               } else {
+                   Logger.Debug(StringFormat(
+                       "Exit signal does not match position:" +
+                       "\nPosition: %s" +
+                       "\nExit Type: %s" +
+                       "\nTicket: %d",
+                       OrderType() == OP_BUY ? "BUY" : "SELL",
+                       signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+                       OrderTicket()
+                   ));
+               }
+           }
+       }
+   }
 }
     
     // Trade Execution Methods
@@ -826,21 +801,41 @@ bool ClosePosition(int ticket, string reason = "") {
         m_lastTrade.closeReason = StringToCloseReason(reason);
         m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
 
-        // Set awaiting flag for SL and trailing stop
-        if(reason == "SL" || reason == "EMERGENCY" || StringFind(reason, "trailing") >= 0) {
+        // Set awaiting flag for SL, trailing stop, and exit signals
+        if(reason == "SL" || reason == "EMERGENCY" || 
+           StringFind(reason, "trailing") >= 0 || 
+           StringFind(reason, "Exit Signal") >= 0) {  // Added exit signal check
+            
             m_awaitingOppositeSignal = true;
             m_lastClosedDirection = currentDirection;
-            Logger.Info(StringFormat(
-                "Stop loss hit - Awaiting opposite signal:" +
-                "\nClosed Direction: %s" +
-                "\nEntry: %.5f" +
-                "\nStop Loss: %.5f" +
-                "\nClose Price: %.5f" +
-                "\nP/L: %.2f",
-                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
-                openPrice, stopLoss, closePrice,
-                m_lastTrade.profit
-            ));
+            
+            string logMessage;
+            if(StringFind(reason, "Exit Signal") >= 0) {
+                logMessage = StringFormat(
+                    "Position closed on %s - Awaiting opposite signal:" +
+                    "\nClosed Direction: %s" +
+                    "\nEntry: %.5f" +
+                    "\nClose Price: %.5f" +
+                    "\nP/L: %.2f",
+                    reason,
+                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+                    openPrice, closePrice,
+                    m_lastTrade.profit
+                );
+            } else {
+                logMessage = StringFormat(
+                    "Stop loss hit - Awaiting opposite signal:" +
+                    "\nClosed Direction: %s" +
+                    "\nEntry: %.5f" +
+                    "\nStop Loss: %.5f" +
+                    "\nClose Price: %.5f" +
+                    "\nP/L: %.2f",
+                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+                    openPrice, stopLoss, closePrice,
+                    m_lastTrade.profit
+                );
+            }
+            Logger.Info(logMessage);
         }
         
         SaveTradeState(); 
@@ -848,7 +843,7 @@ bool ClosePosition(int ticket, string reason = "") {
         LogTradeError("Order close failed", GetLastError());
     }
 
-    return success;  // Return the result of the close operation
+    return success;
 }
 
     // Position Modification Methods
