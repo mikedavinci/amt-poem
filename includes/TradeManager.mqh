@@ -198,47 +198,6 @@ void LoadTradeState() {
         return true;
     }
 
-double GetEmergencyStopDistance(double currentPrice, double entryPrice, int orderType) {
-    // Only calculate emergency stop distance from entry price
-    double emergencyStopDistance;
-    
-    if(m_symbolInfo.IsCryptoPair()) {
-        emergencyStopDistance = entryPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
-        Logger.Debug(StringFormat("Emergency Crypto Stop: %.2f%%", CRYPTO_EMERGENCY_STOP_PERCENT));
-    } else {
-        emergencyStopDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
-        Logger.Debug(StringFormat("Emergency Forex Stop: %d pips", FOREX_EMERGENCY_PIPS));
-    }
-
-    // Check if emergency condition is met
-    bool emergencyCondition = false;
-    if(orderType == OP_BUY) {
-        if(currentPrice < entryPrice - emergencyStopDistance) {
-            emergencyCondition = true;
-        }
-    } else {
-        if(currentPrice > entryPrice + emergencyStopDistance) {
-            emergencyCondition = true;
-        }
-    }
-
-    Logger.Debug(StringFormat(
-        "Emergency Stop Calculations:" +
-        "\nSymbol: %s" +
-        "\nEntry Price: %.5f" +
-        "\nCurrent Price: %.5f" +
-        "\nEmergency Stop Distance: %.5f" +
-        "\nEmergency Condition: %s",
-        m_symbolInfo.GetSymbol(),
-        entryPrice,
-        currentPrice,
-        emergencyStopDistance,
-        emergencyCondition ? "Yes" : "No"
-    ));
-
-    return emergencyCondition ? emergencyStopDistance : 0;
-}
-
 bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
                        double tp, string comment, const SignalData& signal) {
     int ticket = -1;
@@ -292,12 +251,12 @@ bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
                 return false;
             }
         } else {
-            // For SELL positions, use tp2 as stop loss
-            if(signal.tp2 > 0) {
-                newStopLoss = signal.tp2;
-                Logger.Debug(StringFormat("SELL Position: Using TP2 for stop loss: %.5f", newStopLoss));
+            // For SELL positions, use sl2 as stop loss
+            if(signal.sl2 > 0) {
+                newStopLoss = signal.sl2;
+                Logger.Debug(StringFormat("SELL Position: Using SL2 for stop loss: %.5f", newStopLoss));
             } else {
-                Logger.Error("SELL Signal missing TP2 value for stop loss");
+                Logger.Error("SELL Signal missing SL2 value for stop loss");
                 return false;
             }
         }
@@ -369,30 +328,49 @@ bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
 
 bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
         if(m_symbolInfo.IsCryptoPair()) {
-        double emergencyDistance = openPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
-        bool stopHit = false;
-
-        if(orderType == OP_BUY && (currentPrice < openPrice - emergencyDistance)) {
-            stopHit = true;
+            double emergencyDistance = openPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+            
+            if(orderType == OP_BUY && currentPrice < openPrice - emergencyDistance) {
+                Logger.Warning(StringFormat(
+                    "Emergency stop triggered for BUY:" +
+                    "\nOpen Price: %.5f" +
+                    "\nCurrent Price: %.5f" +
+                    "\nEmergency Distance: %.5f",
+                    openPrice, currentPrice, emergencyDistance));
+                return true;
+            }
+            if(orderType == OP_SELL && currentPrice > openPrice + emergencyDistance) {
+                Logger.Warning(StringFormat(
+                    "Emergency stop triggered for SELL:" +
+                    "\nOpen Price: %.5f" +
+                    "\nCurrent Price: %.5f" +
+                    "\nEmergency Distance: %.5f",
+                    openPrice, currentPrice, emergencyDistance));
+                return true;
+            }
+        } else {
+            double emergencyDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
+            
+            if(orderType == OP_BUY && currentPrice < openPrice - emergencyDistance) {
+                Logger.Warning(StringFormat(
+                    "Emergency stop triggered for BUY:" +
+                    "\nOpen Price: %.5f" +
+                    "\nCurrent Price: %.5f" +
+                    "\nEmergency Distance: %.5f",
+                    openPrice, currentPrice, emergencyDistance));
+                return true;
+            }
+            if(orderType == OP_SELL && currentPrice > openPrice + emergencyDistance) {
+                Logger.Warning(StringFormat(
+                    "Emergency stop triggered for SELL:" +
+                    "\nOpen Price: %.5f" +
+                    "\nCurrent Price: %.5f" +
+                    "\nEmergency Distance: %.5f",
+                    openPrice, currentPrice, emergencyDistance));
+                return true;
+            }
         }
-        if(orderType == OP_SELL && (currentPrice > openPrice + emergencyDistance)) {
-            stopHit = true;
-        }
-
-        if(stopHit) {
-            Logger.Warning(StringFormat(
-                "Emergency stop triggered:" +
-                "\nDirection: %s" +
-                "\nOpen Price: %.5f" +
-                "\nCurrent Price: %.5f" +
-                "\nEmergency Distance: %.5f",
-                orderType == OP_BUY ? "BUY" : "SELL",
-                openPrice, currentPrice, emergencyDistance
-            ));
-        }
-        return stopHit;
-    }
-    return false;
+        return false;
 }
 
 void CheckTrailingStop() {

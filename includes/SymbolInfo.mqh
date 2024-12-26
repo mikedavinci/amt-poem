@@ -157,7 +157,7 @@ public:
         }
         // For SELL orders, stop loss must be above entry
         if(orderType == OP_SELL && stopLoss <= entryPrice) {
-            Logger.Error("SELL stop loss (TP2) must be above entry price");
+            Logger.Error("SELL stop loss (SL2) must be above entry price");
             return false;
         }
         

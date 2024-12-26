@@ -99,7 +99,7 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
     if(orderType == OP_BUY) {
         stopLossType = "SL2 (BUY Stop)";
     } else {
-        stopLossType = "TP2 (SELL Stop)";
+        stopLossType = "SL2 (SELL Stop)";
     }
     
     // Log only every 60 seconds

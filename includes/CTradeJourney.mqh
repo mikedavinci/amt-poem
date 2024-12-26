@@ -513,22 +513,22 @@ void ExecuteSignal(const SignalData& signal) {
             return;
         }
     } else {
-        // For SELL positions, use tp2 as stop loss
-        if(signal.tp2 > 0) {
-            stopLoss = signal.tp2;
-            Logger.Debug(StringFormat("SELL Position: Using TP2 for stop loss: %.5f", stopLoss));
+        // For SELL positions, use sl2 as stop loss
+        if(signal.sl2 > 0) {
+            stopLoss = signal.sl2;
+            Logger.Debug(StringFormat("SELL Position: Using SL2 for stop loss: %.5f", stopLoss));
             
-            // Validate TP2 is above entry for SELL
+            // Validate SL2 is above entry for SELL
             if(stopLoss <= signal.price) {
                 Logger.Error(StringFormat(
-                    "Invalid SELL stop loss (TP2) - Must be above entry price:" +
+                    "Invalid SELL stop loss (SL2) - Must be above entry price:" +
                     "\nEntry: %.5f" +
-                    "\nStop Loss (TP2): %.5f",
+                    "\nStop Loss (SL2): %.5f",
                     signal.price, stopLoss));
                 return;
             }
         } else {
-            Logger.Error("SELL Signal missing TP2 value for stop loss");
+            Logger.Error("SELL Signal missing SL2 value for stop loss");
             return;
         }
     }
