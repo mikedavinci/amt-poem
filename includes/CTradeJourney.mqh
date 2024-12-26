@@ -249,6 +249,25 @@ public:
 void ProcessSignals() {
     if(m_currentSymbol != Symbol()) return;
 
+    // Log current trading state before processing new signals
+    Logger.Info(StringFormat(
+        "CURRENT TRADING STATE" +
+        "\n--------------------" +
+        "\nSymbol: %s" +
+        "\nTime: %s" +
+        "\nAwaiting Opposite Signal: %s" +
+        "\nLast Trade Direction: %s" +
+        "\nAllowed Next Direction: %s",
+        m_currentSymbol,
+        TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
+        m_awaitingOppositeSignal ? "YES" : "NO",
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : 
+            m_lastClosedDirection == SIGNAL_SELL ? "SELL" : "NONE",
+        m_awaitingOppositeSignal ? 
+            (m_lastClosedDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY") : 
+            "ANY DIRECTION"
+    ));
+
     string response = FetchSignals();
     if(response == "") return;
 
@@ -256,20 +275,30 @@ void ProcessSignals() {
     Logger.Info("Starting signal processing...");
     
     if(ParseSignal(response, signal)) {
-        Logger.Info(StringFormat("Signal parsed successfully:" +
-            "\nTicker: %s" +
+        Logger.Info(StringFormat(
+            "NEW SIGNAL RECEIVED" +
+            "\n--------------------" +
+            "\nSymbol: %s" +
             "\nSignal Type: %s" +
             "\nPrice: %.5f" +
             "\nPattern: %s" +
             "\nIs Exit: %s" +
-            "\nExit Type: %s",
+            "\nExit Type: %s" +
+            "\nSL2: %.5f" +
+            "\nTP1: %.5f" +
+            "\nTP2: %.5f" +
+            "\nTimestamp: %s",
             signal.ticker,
             signal.signal == SIGNAL_BUY ? "BUY" : 
                 signal.signal == SIGNAL_SELL ? "SELL" : "NEUTRAL",
             signal.price,
             signal.pattern,
-            signal.isExit ? "Yes" : "No",
-            signal.isExit ? (signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH") : "N/A"
+            signal.isExit ? "YES" : "NO",
+            signal.isExit ? (signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH") : "N/A",
+            signal.sl2,
+            signal.tp1,
+            signal.tp2,
+            TimeToString(signal.timestamp, TIME_DATE|TIME_SECONDS)
         ));
 
         if(ValidateSignal(signal)) {
@@ -279,26 +308,31 @@ void ProcessSignals() {
             // Handle exit signals first
             if(signal.isExit) {
                 Logger.Info(StringFormat(
-                    "Processing EXIT signal:" +
+                    "PROCESSING EXIT SIGNAL" +
+                    "\n--------------------" +
+                    "\nSymbol: %s" +
                     "\nExit Type: %s" +
                     "\nPrice: %.5f" +
-                    "\nTicker: %s" +
-                    "\nTP1: %.5f" +      // Added TP1 to logging
-                    "\nPattern: %s",
+                    "\nTP1: %.5f" +
+                    "\nPattern: %s" +
+                    "\nCurrent Direction: %s" +
+                    "\nAwaiting Opposite: %s",
+                    signal.ticker,
                     signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
                     signal.price,
-                    signal.ticker,
-                    signal.tp1,         // Make sure TP1 is logged
-                    signal.pattern
+                    signal.tp1,
+                    signal.pattern,
+                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : 
+                        m_lastClosedDirection == SIGNAL_SELL ? "SELL" : "NONE",
+                    m_awaitingOppositeSignal ? "YES" : "NO"
                 ));
 
-                // Add validation for TP1
                 if(signal.tp1 <= 0) {
                     Logger.Warning(StringFormat(
                         "Exit signal has no valid TP1 - Using price: %.5f",
                         signal.price
                     ));
-                    signal.tp1 = signal.price;  // Fallback to price if TP1 not set
+                    signal.tp1 = signal.price;
                 }
 
                 if(m_tradeManager != NULL) {
@@ -307,28 +341,68 @@ void ProcessSignals() {
                     Logger.Error("Trade manager is NULL - cannot process exit signal");
                 }
             } else {
+                // Entry signal processing
+                string allowedDirection = m_awaitingOppositeSignal ? 
+                    (m_lastClosedDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY") : 
+                    "ANY DIRECTION";
+
                 Logger.Info(StringFormat(
-                    "Processing ENTRY signal:" +
+                    "PROCESSING ENTRY SIGNAL" +
+                    "\n--------------------" +
+                    "\nSymbol: %s" +
                     "\nDirection: %s" +
                     "\nPrice: %.5f" +
                     "\nTP1: %.5f" +
-                    "\nSL2: %.5f",
+                    "\nSL2: %.5f" +
+                    "\nTP2: %.5f" +
+                    "\nAllowed Direction: %s" +
+                    "\nAwaiting Opposite: %s" +
+                    "\nLast Direction: %s",
+                    signal.ticker,
                     signal.signal == SIGNAL_BUY ? "BUY" : "SELL",
                     signal.price,
                     signal.tp1,
-                    signal.sl2
+                    signal.sl2,
+                    signal.tp2,
+                    allowedDirection,
+                    m_awaitingOppositeSignal ? "YES" : "NO",
+                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : 
+                        m_lastClosedDirection == SIGNAL_SELL ? "SELL" : "NONE"
                 ));
-                ExecuteSignal(signal);
+
+                // Validate if signal matches allowed direction
+                if(m_awaitingOppositeSignal) {
+                    if((m_lastClosedDirection == SIGNAL_BUY && signal.signal == SIGNAL_SELL) ||
+                       (m_lastClosedDirection == SIGNAL_SELL && signal.signal == SIGNAL_BUY)) {
+                        Logger.Info("Signal matches required opposite direction - Executing");
+                        ExecuteSignal(signal);
+                    } else {
+                        Logger.Warning(StringFormat(
+                            "Signal rejected - Waiting for %s signal after %s position",
+                            m_lastClosedDirection == SIGNAL_BUY ? "SELL" : "BUY",
+                            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+                        ));
+                    }
+                } else {
+                    Logger.Info("No direction restrictions - Executing signal");
+                    ExecuteSignal(signal);
+                }
             }
         } else {
             Logger.Warning(StringFormat(
-                "Signal validation failed:" +
-                "\nTicker: %s" +
+                "SIGNAL VALIDATION FAILED" +
+                "\n--------------------" +
+                "\nSymbol: %s" +
                 "\nTimestamp: %s" +
-                "\nLast Signal: %s",
+                "\nLast Signal Time: %s" +
+                "\nAwaiting Opposite: %s" +
+                "\nLast Direction: %s",
                 signal.ticker,
                 TimeToString(signal.timestamp),
-                TimeToString(m_lastSignalTimestamp)
+                TimeToString(m_lastSignalTimestamp),
+                m_awaitingOppositeSignal ? "YES" : "NO",
+                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : 
+                    m_lastClosedDirection == SIGNAL_SELL ? "SELL" : "NONE"
             ));
         }
     } else {

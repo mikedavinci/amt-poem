@@ -111,40 +111,90 @@ void OnDeinit(const int reason) {
 //+------------------------------------------------------------------+
 void OnTick() {
     static datetime lastDebugTime = 0;
+    static datetime lastGlobalCheckTime = 0;
+    datetime currentTime = TimeCurrent();
     
     if(g_tradeJourney != NULL) {
-        // Only check state and log periodically (every 300 seconds = 5 minutes)
-        datetime currentTime = TimeCurrent();
+        // Check state and log periodically (every 300 seconds = 5 minutes)
         if(currentTime - lastDebugTime >= 300) {
             string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
             
-            // Use safe checks for global variables
+            // Load global variables with safe checks
             datetime lastCheck = 0;
             datetime lastSignal = 0;
+            double lastTradePrice = 0;
+            bool awaitingOpposite = false;
+            int lastDirection = 0;
+            int lastTradeTicket = 0;
+            double lastTradeLots = 0;
             
+            // Load Last Check Time
             if(GlobalVariableCheck(symbolPrefix + "LAST_CHECK")) {
                 lastCheck = (datetime)GlobalVariableGet(symbolPrefix + "LAST_CHECK");
             }
+            
+            // Load Last Signal Time
             if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL")) {
                 lastSignal = (datetime)GlobalVariableGet(symbolPrefix + "LAST_SIGNAL");
             }
 
-            double lastTradePrice = 0;
+            // Load Last Trade Details
             if(GlobalVariableCheck(symbolPrefix + "LAST_TRADE_PRICE")) {
                 lastTradePrice = GlobalVariableGet(symbolPrefix + "LAST_TRADE_PRICE");
             }
             
+            // Load Awaiting Opposite State
+            if(GlobalVariableCheck(symbolPrefix + "AWAITING_OPPOSITE")) {
+                awaitingOpposite = (GlobalVariableGet(symbolPrefix + "AWAITING_OPPOSITE") == 1);
+            }
+            
+            // Load Last Direction
+            if(GlobalVariableCheck(symbolPrefix + "LAST_DIRECTION")) {
+                lastDirection = (int)GlobalVariableGet(symbolPrefix + "LAST_DIRECTION");
+            }
+            
+            // Load Last Trade Details
+            if(GlobalVariableCheck(symbolPrefix + "LAST_TRADE_TICKET")) {
+                lastTradeTicket = (int)GlobalVariableGet(symbolPrefix + "LAST_TRADE_TICKET");
+            }
+            if(GlobalVariableCheck(symbolPrefix + "LAST_TRADE_LOTS")) {
+                lastTradeLots = GlobalVariableGet(symbolPrefix + "LAST_TRADE_LOTS");
+            }
+            
+            // Enhanced state logging
             Logger.Info(StringFormat(
-                "[%s] EA State - Check: %s, Signal: %s",
+                "EA STATE UPDATE [%s]" +
+                "\n--------------------" +
+                "\nCurrent Time: %s" +
+                "\nLast Check: %s" +
+                "\nLast Signal: %s" +
+                "\nAwaiting Opposite: %s" +
+                "\nLast Direction: %s" +
+                "\nAllowed Direction: %s" +
+                "\n--------------------" +
+                "\nLast Trade Details:" +
+                "\nTicket: %d" +
+                "\nLots: %.2f" +
+                "\nPrice: %.5f",
                 Symbol(),
-                TimeToString(lastCheck),
-                TimeToString(lastSignal)
+                TimeToString(currentTime, TIME_DATE|TIME_SECONDS),
+                TimeToString(lastCheck, TIME_DATE|TIME_SECONDS),
+                TimeToString(lastSignal, TIME_DATE|TIME_SECONDS),
+                awaitingOpposite ? "YES" : "NO",
+                lastDirection == SIGNAL_BUY ? "BUY" : 
+                    lastDirection == SIGNAL_SELL ? "SELL" : "NONE",
+                awaitingOpposite ? 
+                    (lastDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY") : 
+                    "ANY DIRECTION",
+                lastTradeTicket,
+                lastTradeLots,
+                lastTradePrice
             ));
             
             lastDebugTime = currentTime;
         }
         
-        // Process tick without extra logging
+        // Process tick
         g_tradeJourney.OnTick();
     }
 }

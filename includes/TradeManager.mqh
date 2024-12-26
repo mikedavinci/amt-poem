@@ -748,50 +748,50 @@ bool ClosePosition(int ticket, string reason = "") {
     bool success = OrderClose(ticket, OrderLots(), closePrice, m_slippage, clrRed);
     
     if(success) {
+        // Update trade record
         m_lastTrade.closePrice = closePrice;
         m_lastTrade.closeTime = TimeCurrent();
         m_lastTrade.closeReason = StringToCloseReason(reason);
         m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
 
-        // UPDATED: Always update last closed direction
+        // Always update last closed direction
         m_lastClosedDirection = currentDirection;
+        
+        // Always set awaiting opposite signal flag for any close reason
+        m_awaitingOppositeSignal = true;
 
-        // Set awaiting flag for SL, trailing stop, and exit signals
-        if(reason == "SL" || reason == "EMERGENCY" || 
-           StringFind(reason, "trailing") >= 0 || 
-           StringFind(reason, "Exit Signal") >= 0) {  // Added exit signal check
-            
-            m_awaitingOppositeSignal = true;
-            //m_lastClosedDirection = currentDirection;
-            
-            string logMessage;
-            if(StringFind(reason, "Exit Signal") >= 0) {
-                logMessage = StringFormat(
-                    "Position closed on %s - Awaiting opposite signal:" +
-                    "\nClosed Direction: %s" +
-                    "\nEntry: %.5f" +
-                    "\nClose Price: %.5f" +
-                    "\nP/L: %.2f",
-                    reason,
-                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
-                    openPrice, closePrice,
-                    m_lastTrade.profit
-                );
-            } else {
-                logMessage = StringFormat(
-                    "Stop loss hit - Awaiting opposite signal:" +
-                    "\nClosed Direction: %s" +
-                    "\nEntry: %.5f" +
-                    "\nStop Loss: %.5f" +
-                    "\nClose Price: %.5f" +
-                    "\nP/L: %.2f",
-                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
-                    openPrice, stopLoss, closePrice,
-                    m_lastTrade.profit
-                );
-            }
-            Logger.Info(logMessage);
-        }
+        // Determine close reason for logging
+        string closeReasonStr;
+        if(reason == "SL") closeReasonStr = "STOP LOSS";
+        else if(reason == "EMERGENCY") closeReasonStr = "EMERGENCY STOP";
+        else if(StringFind(reason, "Exit Signal") >= 0) closeReasonStr = "TAKE PROFIT EXIT";
+        else if(StringFind(reason, "trailing") >= 0) closeReasonStr = "TRAILING STOP";
+        else closeReasonStr = "MANUAL CLOSE";
+
+        Logger.Trade(StringFormat(
+            "POSITION CLOSED - AWAITING OPPOSITE SIGNAL" +
+            "\n----------------------------------------" +
+            "\nSymbol: %s" +
+            "\nTicket: %d" +
+            "\nClose Reason: %s" +
+            "\nClosed Direction: %s" +
+            "\nEntry Price: %.5f" +
+            "\nStop Loss: %.5f" +
+            "\nClose Price: %.5f" +
+            "\nP/L: %.2f" +
+            "\nNext Valid Direction: %s" +
+            "\nClose Time: %s",
+            m_symbolInfo.GetSymbol(),
+            ticket,
+            closeReasonStr,
+            currentDirection == SIGNAL_BUY ? "BUY" : "SELL",
+            openPrice,
+            stopLoss,
+            closePrice,
+            m_lastTrade.profit,
+            currentDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY",
+            TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS)
+        ));
         
         SaveTradeState(); 
     } else {
