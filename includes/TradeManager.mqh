@@ -260,6 +260,47 @@ double GetCoordinatedStopDistance(double currentPrice, double entryPrice, int or
     return finalStopDistance;
 }
 
+double GetEmergencyStopDistance(double currentPrice, double entryPrice, int orderType) {
+    // Only calculate emergency stop distance from entry price
+    double emergencyStopDistance;
+    
+    if(m_symbolInfo.IsCryptoPair()) {
+        emergencyStopDistance = entryPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+        Logger.Debug(StringFormat("Emergency Crypto Stop: %.2f%%", CRYPTO_EMERGENCY_STOP_PERCENT));
+    } else {
+        emergencyStopDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
+        Logger.Debug(StringFormat("Emergency Forex Stop: %d pips", FOREX_EMERGENCY_PIPS));
+    }
+
+    // Check if emergency condition is met
+    bool emergencyCondition = false;
+    if(orderType == OP_BUY) {
+        if(currentPrice < entryPrice - emergencyStopDistance) {
+            emergencyCondition = true;
+        }
+    } else {
+        if(currentPrice > entryPrice + emergencyStopDistance) {
+            emergencyCondition = true;
+        }
+    }
+
+    Logger.Debug(StringFormat(
+        "Emergency Stop Calculations:" +
+        "\nSymbol: %s" +
+        "\nEntry Price: %.5f" +
+        "\nCurrent Price: %.5f" +
+        "\nEmergency Stop Distance: %.5f" +
+        "\nEmergency Condition: %s",
+        m_symbolInfo.GetSymbol(),
+        entryPrice,
+        currentPrice,
+        emergencyStopDistance,
+        emergencyCondition ? "Yes" : "No"
+    ));
+
+    return emergencyCondition ? emergencyStopDistance : 0;
+}
+
 bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
                        double tp, string comment, const SignalData& signal) {
     int ticket = -1;
@@ -301,16 +342,44 @@ bool ExecuteMarketOrder(int type, double lots, double signalPrice, double sl,
             return false;
         }
 
+        // Updated stop loss logic
         double newStopLoss;
-        if(signal.sl2 > 0) {
-            newStopLoss = signal.sl2;
-            Logger.Debug(StringFormat("Using SL2 from API: %.5f", newStopLoss));
+        if(type == OP_BUY) {
+            // For BUY positions, use sl2 as stop loss
+            if(signal.sl2 > 0) {
+                newStopLoss = signal.sl2;
+                Logger.Debug(StringFormat("BUY Position: Using SL2 for stop loss: %.5f", newStopLoss));
+            } else {
+                Logger.Error("BUY Signal missing SL2 value for stop loss");
+                return false;
+            }
         } else {
-            double stopDistance = GetCoordinatedStopDistance(currentPrice, signalPrice, type);
-            newStopLoss = type == OP_BUY ?
-                currentPrice - stopDistance :
-                currentPrice + stopDistance;
-            Logger.Debug(StringFormat("Using calculated stop: %.5f", newStopLoss));
+            // For SELL positions, use tp2 as stop loss
+            if(signal.tp2 > 0) {
+                newStopLoss = signal.tp2;
+                Logger.Debug(StringFormat("SELL Position: Using TP2 for stop loss: %.5f", newStopLoss));
+            } else {
+                Logger.Error("SELL Signal missing TP2 value for stop loss");
+                return false;
+            }
+        }
+
+        // Validate stop loss
+        if(type == OP_BUY && (newStopLoss >= currentPrice)) {
+            Logger.Error(StringFormat(
+                "Invalid BUY stop loss - Must be below entry price:" +
+                "\nEntry: %.5f" +
+                "\nStop Loss: %.5f",
+                currentPrice, newStopLoss));
+            return false;
+        }
+        if(type == OP_SELL && (newStopLoss <= currentPrice)) {
+            Logger.Error(StringFormat(
+                "Invalid SELL stop loss - Must be above entry price:" +
+                "\nEntry: %.5f" +
+                "\nStop Loss: %.5f",
+                currentPrice, newStopLoss));
+            return false;
         }
 
         if(!m_symbolInfo.ValidateStopLoss(type, currentPrice, newStopLoss)) {
@@ -428,38 +497,38 @@ void CheckTrailingStop() {
                 }
 
                 // Check breakeven condition
-                if(CheckBreakevenCondition(currentPrice, openPrice, currentStop, orderType)) {
-                    double breakEvenStop;
-                    if(orderType == OP_BUY) {
+                //if(CheckBreakevenCondition(currentPrice, openPrice, currentStop, orderType)) {
+                    //double breakEvenStop;
+                    //if(orderType == OP_BUY) {
                         // For buy orders, move stop to entry plus buffer
-                        breakEvenStop = openPrice + (m_symbolInfo.IsCryptoPair() ? 
-                            openPrice * (CRYPTO_BREAKEVEN_BUFFER_PERCENT / 100.0) :
-                            FOREX_BREAKEVEN_BUFFER_PIPS * m_symbolInfo.GetPipSize());
-                    } else {
+                        //breakEvenStop = openPrice + (m_symbolInfo.IsCryptoPair() ? 
+                        //    openPrice * (CRYPTO_BREAKEVEN_BUFFER_PERCENT / 100.0) :
+                        //    FOREX_BREAKEVEN_BUFFER_PIPS * m_symbolInfo.GetPipSize());
+                    //} else {
                         // For sell orders, move stop to entry minus buffer
-                        breakEvenStop = openPrice - (m_symbolInfo.IsCryptoPair() ? 
-                            openPrice * (CRYPTO_BREAKEVEN_BUFFER_PERCENT / 100.0) :
-                            FOREX_BREAKEVEN_BUFFER_PIPS * m_symbolInfo.GetPipSize());
-                    }
+                        //breakEvenStop = openPrice - (m_symbolInfo.IsCryptoPair() ? 
+                        //    openPrice * (CRYPTO_BREAKEVEN_BUFFER_PERCENT / 100.0) :
+                        //    FOREX_BREAKEVEN_BUFFER_PIPS * m_symbolInfo.GetPipSize());
+                    //}
 
                     // Only modify if new stop is better than current
-                    if(orderType == OP_BUY && (currentStop == 0 || breakEvenStop > currentStop)) {
-                        ModifyPosition(OrderTicket(), breakEvenStop);
-                    }
-                    else if(orderType == OP_SELL && (currentStop == 0 || breakEvenStop < currentStop)) {
-                        ModifyPosition(OrderTicket(), breakEvenStop);
-                    }
-                }
+                    //if(orderType == OP_BUY && (currentStop == 0 || breakEvenStop > currentStop)) {
+                    //    ModifyPosition(OrderTicket(), breakEvenStop);
+                    //}
+                    //else if(orderType == OP_SELL && (currentStop == 0 || breakEvenStop < currentStop)) {
+                    //    ModifyPosition(OrderTicket(), breakEvenStop);
+                    //}
+                // }
 
                 // Only set initial stop loss if none exists
-                else if(OrderStopLoss() == 0) {
-                    double stopDistance = GetCoordinatedStopDistance(currentPrice, openPrice, orderType);
-                    double initialStopLoss = orderType == OP_BUY ?
-                        openPrice - stopDistance :
-                        openPrice + stopDistance;
+                // else if(OrderStopLoss() == 0) {
+                    // double stopDistance = GetCoordinatedStopDistance(currentPrice, openPrice, orderType);
+                    // double initialStopLoss = orderType == OP_BUY ?
+                    //     openPrice - stopDistance :
+                    //     openPrice + stopDistance;
 
-                    ModifyPosition(OrderTicket(), initialStopLoss);
-                }
+                    // ModifyPosition(OrderTicket(), initialStopLoss);
+                // }
             }
         }
     }

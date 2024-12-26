@@ -38,12 +38,12 @@
 #define EMERGENCY_CLOSE_PERCENT    5
 
 // Regular Stops
-#define FOREX_STOP_PIPS           80
-#define CRYPTO_STOP_PERCENT       4.0
+// #define FOREX_STOP_PIPS           80
+// #define CRYPTO_STOP_PERCENT       4.0
 
 // Emergency Stops
-#define FOREX_EMERGENCY_PIPS      120
-#define CRYPTO_EMERGENCY_STOP_PERCENT 10.0
+#define FOREX_EMERGENCY_PIPS      80
+#define CRYPTO_EMERGENCY_STOP_PERCENT 5.0
 
 // ATR-based Stops
 // #define ATR_PERIOD               14      // Period for ATR calculation
@@ -51,12 +51,12 @@
 // #define CRYPTO_ATR_MULTIPLIER    2.5     // Higher multiplier for crypto due to volatility
 
 // BREAKEVEN settings for Forex
-#define FOREX_BREAKEVEN_PROFIT_PIPS   20    // Pips of profit before breakeven
-#define FOREX_BREAKEVEN_BUFFER_PIPS   2     // Buffer pips above entry price
+// #define FOREX_BREAKEVEN_PROFIT_PIPS   20    // Pips of profit before breakeven
+// #define FOREX_BREAKEVEN_BUFFER_PIPS   2     // Buffer pips above entry price
 
 // BREAKEVEN settings for Crypto
-#define CRYPTO_BREAKEVEN_PROFIT_PERCENT 5.0  // Percentage of profit before breakeven (1%)
-#define CRYPTO_BREAKEVEN_BUFFER_PERCENT 0.5  // Buffer percentage above entry price (0.1%)
+// #define CRYPTO_BREAKEVEN_PROFIT_PERCENT 5.0  // Percentage of profit before breakeven (1%)
+// #define CRYPTO_BREAKEVEN_BUFFER_PERCENT 0.5  // Buffer percentage above entry price (0.1%)
 
 // Profit Protection Settings
 #define PROFIT_CHECK_INTERVAL      300    // Check profit every 5 minutes
