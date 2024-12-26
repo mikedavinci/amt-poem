@@ -25,7 +25,7 @@ void PerformPeriodicChecks() {
     
     // Only run checks and load values every 60 seconds
     if(currentTime - lastPeriodicCheck >= 60) {
-        if(m_currentSymbol != Symbol()) return;  // Symbol validation
+        if(m_currentSymbol != Symbol()) return;  
         
         datetime lastCheck = LoadLastCheck();
         if(currentTime - lastCheck >= RISK_CHECK_INTERVAL) {
@@ -237,13 +237,15 @@ public:
             ProcessSignals();
         }
 
-        if(ENABLE_PROFIT_PROTECTION) {
-            static datetime lastCheck = 0;
-            if(TimeCurrent() - lastCheck >= PROFIT_CHECK_INTERVAL) {
-                m_tradeManager.MonitorPositions();
-                lastCheck = TimeCurrent();
-            }
-        }
+        // if(ENABLE_PROFIT_PROTECTION) {
+        //     static datetime lastCheck = 0;
+        //     if(TimeCurrent() - lastCheck >= PROFIT_CHECK_INTERVAL) {
+        //         m_tradeManager.MonitorPositions();
+        //         lastCheck = TimeCurrent();
+        //     }
+        // }
+
+        m_tradeManager.MonitorPositions();
       }
 
 void ProcessSignals() {
@@ -458,11 +460,13 @@ void ExecuteSignal(const SignalData& signal) {
         return;
     }
 
+    // Set risk percent based on instrument type
     double riskPercent = m_symbolInfo.IsCryptoPair() ?
         CRYPTO_STOP_PERCENT : DEFAULT_RISK_PERCENT;
     m_riskManager.SetRiskPercent(riskPercent);
     Logger.Debug(StringFormat("Using Risk Percent: %.2f%%", riskPercent));
 
+    // Calculate position size
     double lots = m_riskManager.CalculatePositionSize(signal.price, stopLoss, orderType);
     Logger.Debug(StringFormat("Calculated Position Size: %.2f lots", lots));
 
@@ -471,12 +475,12 @@ void ExecuteSignal(const SignalData& signal) {
         return;
     }
 
+    // Prepare trade comment
     string tradeComment = StringFormat("TJ:%s:%s", signalDirection, signal.pattern);
     tradeComment = StringSubstr(tradeComment, 0, 31);
     Logger.Debug(StringFormat("Trade comment prepared: '%s'", tradeComment));
 
     bool success = false;
-
     switch(signal.signal) {
         case SIGNAL_BUY:
             Logger.Debug(StringFormat(
@@ -1049,9 +1053,7 @@ void CheckProfitProtection(const PositionMetrics &metrics) {
         PositionMetrics metrics = m_tradeManager.GetPositionMetrics();
 
         if(metrics.totalPositions > 0) {
-            if(ENABLE_PROFIT_PROTECTION) {
-                CheckProfitProtection(metrics);
-            }
+           // if(ENABLE_PROFIT_PROTECTION) {CheckProfitProtection(metrics);}
 
             Logger.Debug(StringFormat(
                 "Position Status:" +

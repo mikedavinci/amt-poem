@@ -198,7 +198,7 @@ void LoadTradeState() {
         return true;
     }
 
-double GetCoordinatedStopDistance(double currentPrice, double entryPrice, int orderType) {
+double DEPRECATED_GetCoordinatedStopDistance(double currentPrice, double entryPrice, int orderType) {
     // Calculate regular stop distance from entry price
     double regularStopDistance;
     if(m_symbolInfo.IsCryptoPair()) {
@@ -457,7 +457,7 @@ bool CheckEmergencyStop(double currentPrice, double openPrice, int orderType) {
     return false;
 }
 
-    bool CheckBreakevenCondition(double currentPrice, double openPrice,
+    bool DEPRECATED_CheckBreakevenCondition(double currentPrice, double openPrice,
                                double currentStop, int orderType) {
         // Don't move to breakeven if we're already there or beyond
         if(orderType == OP_BUY && currentStop >= openPrice) return false;
@@ -1035,7 +1035,7 @@ bool ModifyPosition(int ticket, double sl, double tp = 0) {
 }
 
     // Position Modification Methods
-bool Version2ModifyPosition(int ticket, double sl, double tp = 0) {
+bool DEPRECATED_ModifyPosition(int ticket, double sl, double tp = 0) {
 
     // Validate symbol
         if(m_symbolInfo.GetSymbol() != Symbol()) {
