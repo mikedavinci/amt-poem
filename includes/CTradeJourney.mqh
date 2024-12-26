@@ -17,6 +17,8 @@ private:
     datetime m_lastSignalTimestamp;
     string m_currentSymbol;
     datetime m_lastDebugTime;
+    bool m_awaitingOppositeSignal;         
+    ENUM_TRADE_SIGNAL m_lastClosedDirection;
 
     // Moving periodic checks to private method
 void PerformPeriodicChecks() {
@@ -84,6 +86,11 @@ public:
         m_sessionManager = NULL;
         m_currentSymbol = Symbol();
         m_lastDebugTime = 0; 
+
+    // Initialize flags
+    m_awaitingOppositeSignal = false;
+    m_lastClosedDirection = SIGNAL_NEUTRAL;
+
        // Initialize timestamps
     datetime currentTime = TimeCurrent();
      // Only initialize if not already set

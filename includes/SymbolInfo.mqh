@@ -111,37 +111,37 @@ public:
     }
     
     // Market data methods
-    double GetBid() const {
+    double GetBid() {
         return MarketInfo(m_symbol, MODE_BID);
     }
-    
-    double GetAsk() const {
+
+    double GetAsk() {
         return MarketInfo(m_symbol, MODE_ASK);
     }
-    
-    double GetSpread() const {
+
+    double GetSpread() {
         return NormalizePrice(GetAsk() - GetBid());
     }
     
     // Pip value calculations
-    double GetPipValue(double lots = 1.0) const {
+    double GetPipValue(double lots = 1.0)  {
         double tickValue = MarketInfo(m_symbol, MODE_TICKVALUE);
         return m_isJPYPair ? (tickValue * 100 * lots) : (tickValue * 10 * lots);
     }
     
     // Convert price difference to pips
-    double PriceToPips(double priceChange) const {
+    double PriceToPips(double priceChange)  {
         return MathAbs(priceChange) / m_pipSize;
     }
     
     // Convert pips to price difference
-    double PipsToPrice(double pips) const {
+    double PipsToPrice(double pips)  {
         return pips * m_pipSize;
     }
     
     
     // Validate stop loss level
-    bool ValidateStopLoss(int orderType, double entryPrice, double stopLoss) const {
+    bool ValidateStopLoss(int orderType, double entryPrice, double stopLoss) {
         if(stopLoss <= 0) return false;
         
         double minDistance = MarketInfo(m_symbol, MODE_STOPLEVEL) * m_point;
@@ -151,9 +151,15 @@ public:
         if(actualDistance < minDistance) return false;
         
         // For BUY orders, stop loss must be below entry
-        if(orderType == OP_BUY && stopLoss >= entryPrice) return false;
+        if(orderType == OP_BUY && stopLoss >= entryPrice) {
+            Logger.Error("BUY stop loss (SL2) must be below entry price");
+            return false;
+        }
         // For SELL orders, stop loss must be above entry
-        if(orderType == OP_SELL && stopLoss <= entryPrice) return false;
+        if(orderType == OP_SELL && stopLoss <= entryPrice) {
+            Logger.Error("SELL stop loss (TP2) must be above entry price");
+            return false;
+        }
         
         return true;
     }
@@ -173,7 +179,7 @@ public:
     //}
 
     // Calculate emergency stop distance
-    double GetEmergencyStopDistance() const {
+    double GetEmergencyStopDistance() {
         if(m_symbolType == SYMBOL_TYPE_CRYPTO) {
             return CRYPTO_EMERGENCY_STOP_PERCENT / 100.0;
         } else {
@@ -182,7 +188,7 @@ public:
     }
 
     // Check if stop loss is at emergency level
-    bool IsEmergencyStopLevel(double entryPrice, double stopLoss, int orderType) const {
+    bool IsEmergencyStopLevel(double entryPrice, double stopLoss, int orderType) {
         double emergencyDistance = GetEmergencyStopDistance();
         double actualDistance = MathAbs(entryPrice - stopLoss);
         

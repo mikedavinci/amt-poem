@@ -94,18 +94,27 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
         
         riskAmount = (stopDistance / point) * tickValue * lots;
     }
+
+    string stopLossType;
+    if(orderType == OP_BUY) {
+        stopLossType = "SL2 (BUY Stop)";
+    } else {
+        stopLossType = "TP2 (SELL Stop)";
+    }
     
     // Log only every 60 seconds
     if(currentTime - lastLog >= 60) {
         Logger.Debug(StringFormat(
             "Risk Calculation:" +
             "\nDirection: %s" +
+            "\nStop Type: %s" +
             "\nLots: %.2f" +
             "\nEntry: %.5f" +
             "\nStop Loss: %.5f" +
             "\nStop Distance: %.5f" +
             "\nRisk Amount: %.2f",
             orderType == OP_BUY ? "BUY" : "SELL",
+            stopLossType,
             lots,
             entryPrice,
             stopLoss,
@@ -427,6 +436,7 @@ double CalculateTotalAccountRisk() {
 }
 
 bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
+
     if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
         Logger.Error(StringFormat(
             "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
@@ -457,6 +467,7 @@ bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int o
     
     Logger.Debug(StringFormat(
         "Risk Validation - %s:" +
+        "\nStop Loss Type: %s" +
         "\nLots: %.2f" +
         "\nEntry: %.5f" +
         "\nStop Loss: %.5f" +
