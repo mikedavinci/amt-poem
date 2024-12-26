@@ -198,9 +198,7 @@ public:
             m_currentSymbol,
             RISK_PERCENT,
             MARGIN_BUFFER,
-            MAX_ACCOUNT_RISK,
-            ENABLE_PROFIT_PROTECTION ? "Enabled" : "Disabled"
-        ));
+            MAX_ACCOUNT_RISK        ));
         return true;
     }
 
@@ -962,67 +960,6 @@ bool ValidateSignal(const SignalData& signal) {
 
     Logger.Info("Signal validation passed");
     return true;
-}
-
-
-    //+------------------------------------------------------------------+
-//| Check and apply profit protection                                  |
-//+------------------------------------------------------------------+
-void DEPRECATED_CheckProfitProtection(const PositionMetrics &metrics) {
-    if(m_currentSymbol != Symbol()) {
-        Logger.Error(StringFormat(
-            "Symbol mismatch in CheckProfitProtection - Current: %s, MT4: %s",
-            m_currentSymbol, Symbol()));
-        return;
-    }
-
-    if(metrics.totalPositions == 0) return;
-
-    for(int i = OrdersTotal() - 1; i >= 0; i--) {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-            if(OrderSymbol() == m_currentSymbol && 
-               StringFind(OrderComment(), "Exit Signal") == -1) { 
-                double currentPrice = OrderType() == OP_BUY ?
-                                    m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
-                double openPrice = OrderOpenPrice();
-                double stopLoss = OrderStopLoss();
-                double tp1 = OrderTakeProfit();
-
-
-                // Only manage stops and protection if not already at TP
-                if(tp1 == 0) {
-                    // Calculate profit thresholds
-                    double profitThreshold;
-                    double lockProfit;
-
-                    if(m_symbolInfo.IsCryptoPair()) {
-                        profitThreshold = openPrice * (CRYPTO_PROFIT_THRESHOLD / 100.0);
-                        lockProfit = openPrice * (CRYPTO_PROFIT_LOCK_PERCENT / 100.0);
-                    } else {
-                        profitThreshold = FOREX_PROFIT_PIPS_THRESHOLD * m_symbolInfo.GetPipSize();
-                        lockProfit = FOREX_PROFIT_LOCK_PIPS * m_symbolInfo.GetPipSize();
-                    }
-
-                    // Check if profit exceeds threshold for trailing
-                    if(OrderType() == OP_BUY) {
-                        if((currentPrice - openPrice) >= profitThreshold) {
-                            double newStop = currentPrice - lockProfit;
-                            if(stopLoss == 0 || newStop > stopLoss) {
-                                m_tradeManager.ModifyPosition(OrderTicket(), newStop);
-                            }
-                        }
-                    } else {
-                        if((openPrice - currentPrice) >= profitThreshold) {
-                            double newStop = currentPrice + lockProfit;
-                            if(stopLoss == 0 || newStop < stopLoss) {
-                                m_tradeManager.ModifyPosition(OrderTicket(), newStop);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
     void CloseAllPositions(string reason) {

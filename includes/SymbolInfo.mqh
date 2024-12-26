@@ -24,7 +24,6 @@ private:
     string          m_symbol;           // Symbol name
     ENUM_SYMBOL_TYPE m_symbolType;      // Symbol classification
     bool            m_isJPYPair;        // JPY pair flag
-    //double          m_atr;              // Current ATR value
     int             m_digits;           // Price digits
     double          m_contractSize;     // Contract size
     double          m_marginPercent;    // Margin requirement
@@ -38,10 +37,6 @@ private:
         SetSymbolProperties();
     }
 
-    // method to calculate ATR
-    //    void CalculateATR() {
-    //        m_atr = iATR(_Symbol, PERIOD_CURRENT, ATR_PERIOD, 0);
-    //    }
     
     // Determine symbol type and characteristics
     void DetermineSymbolType() {
@@ -144,12 +139,6 @@ public:
         return pips * m_pipSize;
     }
     
-    // Get maximum allowed price deviation
-    double GetMaxPriceDeviation() const {
-        if(m_symbolType == SYMBOL_TYPE_CRYPTO) return 100.0;    // $100 for crypto
-        if(m_isJPYPair) return 0.5;                            // 50 pips for JPY pairs
-        return 0.005;                                          // 50 pips for regular forex
-    }
     
     // Validate stop loss level
     bool ValidateStopLoss(int orderType, double entryPrice, double stopLoss) const {
@@ -158,89 +147,49 @@ public:
         double minDistance = MarketInfo(m_symbol, MODE_STOPLEVEL) * m_point;
         double actualDistance = MathAbs(entryPrice - stopLoss);
         
+        // Check minimum broker distance
         if(actualDistance < minDistance) return false;
         
+        // For BUY orders, stop loss must be below entry
         if(orderType == OP_BUY && stopLoss >= entryPrice) return false;
+        // For SELL orders, stop loss must be above entry
         if(orderType == OP_SELL && stopLoss <= entryPrice) return false;
         
         return true;
     }
     
     // Calculate stop loss price
-    double CalculateStopLoss(int orderType, double entryPrice) const {
-        double stopDistance;
+    //double CalculateStopLoss(int orderType, double entryPrice) const {
+    //    double stopDistance;
         
+    //    if(m_symbolType == SYMBOL_TYPE_CRYPTO) {
+    //        stopDistance = entryPrice * (CRYPTO_STOP_PERCENT / 100.0);
+    //    } else {
+    //        stopDistance = FOREX_STOP_PIPS * m_pipSize;
+    //    }
+        
+    //    return NormalizePrice(orderType == OP_BUY ? 
+    //        entryPrice - stopDistance : entryPrice + stopDistance);
+    //}
+
+    // Calculate emergency stop distance
+    double GetEmergencyStopDistance() const {
         if(m_symbolType == SYMBOL_TYPE_CRYPTO) {
-            stopDistance = entryPrice * (CRYPTO_STOP_PERCENT / 100.0);
+            return CRYPTO_EMERGENCY_STOP_PERCENT / 100.0;
         } else {
-            stopDistance = FOREX_STOP_PIPS * m_pipSize;
+            return FOREX_EMERGENCY_PIPS * m_pipSize;
         }
-        
-        return NormalizePrice(orderType == OP_BUY ? 
-            entryPrice - stopDistance : entryPrice + stopDistance);
     }
 
-    // Add method to get ATR-based stop loss
-
-        // Add these methods
-        // double GetATR() {
-        //         CalculateATR();
-        //         return m_atr;
-        //     }
-
-            // double GetATRStopLoss(int orderType, double entryPrice) {
-            //         CalculateATR();
-
-            //         double multiplier = IsCryptoPair() ?
-            //             CRYPTO_ATR_MULTIPLIER : FOREX_ATR_MULTIPLIER;
-
-            //         double atrStopDistance = m_atr * multiplier;
-
-            //         // Calculate emergency stop distance
-            //         double emergencyStopDistance;
-            //         if(IsCryptoPair()) {
-            //             emergencyStopDistance = entryPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
-            //         } else {
-            //             emergencyStopDistance = FOREX_EMERGENCY_PIPS * GetPipSize();
-            //         }
-
-            //         // ATR stop should not exceed emergency stop distance
-            //         double finalStopDistance = MathMin(atrStopDistance, emergencyStopDistance);
-
-            //         // Calculate and normalize stop loss price
-            //         double stopPrice;
-            //         if(orderType == OP_BUY) {
-            //             stopPrice = entryPrice - finalStopDistance;
-
-            //             // Apply minimum stop distance
-            //             double minStopDistance = IsCryptoPair() ?
-            //                 entryPrice * (CRYPTO_STOP_PERCENT / 100.0) :
-            //                 FOREX_STOP_PIPS * GetPipSize();
-
-            //             stopPrice = MathMin(stopPrice, entryPrice - minStopDistance);
-            //         } else {
-            //             stopPrice = entryPrice + finalStopDistance;
-
-            //             // Apply minimum stop distance
-            //             double minStopDistance = IsCryptoPair() ?
-            //                 entryPrice * (CRYPTO_STOP_PERCENT / 100.0) :
-            //                 FOREX_STOP_PIPS * GetPipSize();
-
-            //             stopPrice = MathMax(stopPrice, entryPrice + minStopDistance);
-            //         }
-
-            //         Logger.Debug(StringFormat(
-            //             "Stop Loss Calculation:" +
-            //             "\nATR Stop Distance: %.5f" +
-            //             "\nEmergency Stop Distance: %.5f" +
-            //             "\nFinal Stop Distance: %.5f" +
-            //             "\nFinal Stop Price: %.5f",
-            //             atrStopDistance,
-            //             emergencyStopDistance,
-            //             finalStopDistance,
-            //             stopPrice
-            //         ));
-
-            //         return NormalizePrice(stopPrice);
-            //     }
+    // Check if stop loss is at emergency level
+    bool IsEmergencyStopLevel(double entryPrice, double stopLoss, int orderType) const {
+        double emergencyDistance = GetEmergencyStopDistance();
+        double actualDistance = MathAbs(entryPrice - stopLoss);
+        
+        if(orderType == OP_BUY) {
+            return stopLoss <= (entryPrice - emergencyDistance);
+        } else {
+            return stopLoss >= (entryPrice + emergencyDistance);
+        }
+    }
 };

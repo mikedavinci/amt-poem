@@ -470,49 +470,6 @@ bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int o
     return ValidateRiskLevels(positionRisk, isEmergencyStop ? "Emergency" : "Position Risk");
 }
 
-
-bool DEPRECATED_ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
-    if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
-        Logger.Error(StringFormat(
-            "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
-            lots, entryPrice, stopLoss
-        ));
-        return false;
-    }
-
-    // Get current market price
-    double currentPrice = orderType == OP_BUY ? 
-        m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
-
-    // Check if we're in profit
-    bool isInProfit = (orderType == OP_BUY && currentPrice > entryPrice) ||
-                     (orderType == OP_SELL && currentPrice < entryPrice);
-
-    // If in profit, check if stop loss is protective
-    if(isInProfit) {
-        if((orderType == OP_BUY && stopLoss >= entryPrice) ||
-           (orderType == OP_SELL && stopLoss <= entryPrice)) {
-            return true;  // Allow protective stops without risk check
-        }
-    }
-
-    // Calculate and validate risk
-    double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss, orderType);
-    
-    // Only log detailed risk info for non-protective stops
-    Logger.Debug(StringFormat(
-        "Risk Validation - %s:" +
-        "\nLots: %.2f" +
-        "\nEntry: %.5f" +
-        "\nStop: %.5f" +
-        "\nRisk: %.2f",
-        orderType == OP_BUY ? "BUY" : "SELL",
-        lots, entryPrice, stopLoss, positionRisk
-    ));
-    
-    return ValidateRiskLevels(positionRisk, "Position Risk");
-}
-
     bool ValidateNewPosition(double lots, double entryPrice, double stopLoss, int orderType) {
         // Count existing positions first
         int existingPositions = 0;

@@ -26,9 +26,9 @@ extern string SYSTEM_NAME = "EA-TradeJourney";                                  
 extern string TIMEFRAME = "60";                                               // Timeframe parameter
 
 // Risk Management
-extern double RISK_PERCENT = 2.0;                    // Risk percentage per trade
+extern double RISK_PERCENT = 3.0;                    // Risk percentage per trade
 extern double MARGIN_BUFFER = 50.0;                  // Margin buffer percentage
-extern bool ENABLE_PROFIT_PROTECTION = true;         // Enable profit protection
+// extern bool ENABLE_PROFIT_PROTECTION = false;         // Enable profit protection
 extern double MAX_ACCOUNT_RISK = 5.0;               // Maximum total account risk
 
 // Session Settings
@@ -127,6 +127,11 @@ void OnTick() {
             }
             if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL")) {
                 lastSignal = (datetime)GlobalVariableGet(symbolPrefix + "LAST_SIGNAL");
+            }
+
+            double lastTradePrice = 0;
+            if(GlobalVariableCheck(symbolPrefix + "LAST_TRADE_PRICE")) {
+                lastTradePrice = GlobalVariableGet(symbolPrefix + "LAST_TRADE_PRICE");
             }
             
             Logger.Info(StringFormat(
