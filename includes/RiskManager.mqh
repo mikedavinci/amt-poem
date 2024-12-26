@@ -23,46 +23,52 @@ private:
     double          m_marginBuffer;     // Margin safety buffer (percentage)
 
 
- bool ValidateRiskLevels(double positionRisk, string context = "") {  
-        double accountBalance = AccountBalance();
-        if(accountBalance <= 0) {
-            Logger.Error("Invalid account balance");
-            return false;
-        }
-
-        double riskPercent = (positionRisk / accountBalance) * 100;
-        double totalRisk = CalculateTotalAccountRisk() + positionRisk;
-        double totalRiskPercent = (totalRisk / accountBalance) * 100;
-
-        Logger.Debug(StringFormat(
-            "Risk Validation [%s]:" +
-            "\nPosition Risk: %.2f%%" +
-            "\nTotal Risk: %.2f%%" +
-            "\nRisk Limit: %.2f%%" +
-            "\nTotal Risk Limit: %.2f%%",
-            context,
-            riskPercent,
-            totalRiskPercent,
-            m_riskPercent,
-            m_maxAccountRisk
-        ));
-
-        // Check position risk
-        if(riskPercent > m_riskPercent) {
-            Logger.Warning(StringFormat("[%s] Position risk %.2f%% exceeds limit %.2f%%",
-                          context, riskPercent, m_riskPercent));
-            return false;
-        }
-
-        // Check total account risk
-        if(totalRiskPercent > m_maxAccountRisk) {
-            Logger.Warning(StringFormat("[%s] Total account risk %.2f%% exceeds limit %.2f%%",
-                          context, totalRiskPercent, m_maxAccountRisk));
-            return false;
-        }
-
-        return true;
+bool ValidateRiskLevels(double positionRisk, string context = "") {  
+    double accountBalance = AccountBalance();
+    if(accountBalance <= 0) {
+        Logger.Error("Invalid account balance");
+        return false;
     }
+
+    // For emergency stops, use special handling
+    bool isEmergencyStop = (StringFind(context, "Emergency") >= 0);
+    
+    // Calculate risk percentages
+    double riskPercent = (positionRisk / accountBalance) * 100;
+    double totalRisk = CalculateTotalAccountRisk() + positionRisk;
+    double totalRiskPercent = (totalRisk / accountBalance) * 100;
+
+    // Check trade risk percent (this is what we were missing)
+    if(riskPercent > m_riskPercent && !isEmergencyStop) {
+        Logger.Warning(StringFormat(
+            "[%s] Trade risk %.2f%% exceeds allowed risk per trade %.2f%%",
+            context, riskPercent, m_riskPercent
+        ));
+        return false;
+    }
+
+    // Check max account risk
+    if(totalRiskPercent > m_maxAccountRisk) {
+        Logger.Warning(StringFormat(
+            "[%s] Total account risk %.2f%% exceeds maximum allowed %.2f%%",
+            context, totalRiskPercent, m_maxAccountRisk
+        ));
+        return false;
+    }
+
+    Logger.Debug(StringFormat(
+        "Risk Validation [%s]:" +
+        "\nTrade Risk: %.2f%% (Limit: %.2f%%)" +
+        "\nTotal Risk: %.2f%% (Limit: %.2f%%)" +
+        "\nEmergency Stop: %s",
+        context,
+        riskPercent, m_riskPercent,
+        totalRiskPercent, m_maxAccountRisk,
+        isEmergencyStop ? "Yes" : "No"
+    ));
+
+    return true;
+}
 
 public:
 // Calculate monetary risk for a position
@@ -95,10 +101,16 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
             "Risk Calculation:" +
             "\nDirection: %s" +
             "\nLots: %.2f" +
+            "\nEntry: %.5f" +
+            "\nStop Loss: %.5f" +
             "\nStop Distance: %.5f" +
             "\nRisk Amount: %.2f",
             orderType == OP_BUY ? "BUY" : "SELL",
-            lots, stopDistance, riskAmount
+            lots,
+            entryPrice,
+            stopLoss,
+            stopDistance,
+            riskAmount
         ));
         lastLog = currentTime;
     }
@@ -147,7 +159,7 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
             // Validate symbol info pointer
             if(symbolInfo == NULL) {
                 Logger.Error("NULL symbol info passed to RiskManager");
-                ExpertRemove();  // Stop the EA if symbol info is NULL
+                ExpertRemove(); 
                 return;
             }
 
@@ -414,8 +426,52 @@ double CalculateTotalAccountRisk() {
     return totalRisk;
 }
 
-
 bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
+    if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
+        Logger.Error(StringFormat(
+            "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
+            lots, entryPrice, stopLoss
+        ));
+        return false;
+    }
+
+    // Check if this is an emergency stop
+    bool isEmergencyStop = false;
+    double emergencyStopDistance;
+    
+    if(m_symbolInfo.IsCryptoPair()) {
+        emergencyStopDistance = entryPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+    } else {
+        emergencyStopDistance = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
+    }
+
+    double stopDistance = MathAbs(entryPrice - stopLoss);
+    if(orderType == OP_BUY) {
+        isEmergencyStop = stopLoss <= (entryPrice - emergencyStopDistance);
+    } else {
+        isEmergencyStop = stopLoss >= (entryPrice + emergencyStopDistance);
+    }
+
+    // Calculate and validate risk
+    double positionRisk = CalculatePositionRisk(lots, entryPrice, stopLoss, orderType);
+    
+    Logger.Debug(StringFormat(
+        "Risk Validation - %s:" +
+        "\nLots: %.2f" +
+        "\nEntry: %.5f" +
+        "\nStop Loss: %.5f" +
+        "\nRisk Amount: %.2f" +
+        "\nEmergency Stop: %s",
+        orderType == OP_BUY ? "BUY" : "SELL",
+        lots, entryPrice, stopLoss, positionRisk,
+        isEmergencyStop ? "Yes" : "No"
+    ));
+    
+    return ValidateRiskLevels(positionRisk, isEmergencyStop ? "Emergency" : "Position Risk");
+}
+
+
+bool DEPRECATED_ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
     if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
         Logger.Error(StringFormat(
             "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
