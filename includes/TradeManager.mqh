@@ -801,13 +801,16 @@ bool ClosePosition(int ticket, string reason = "") {
         m_lastTrade.closeReason = StringToCloseReason(reason);
         m_lastTrade.profit = OrderProfit() + OrderSwap() + OrderCommission();
 
+        // UPDATED: Always update last closed direction
+        m_lastClosedDirection = currentDirection;
+
         // Set awaiting flag for SL, trailing stop, and exit signals
         if(reason == "SL" || reason == "EMERGENCY" || 
            StringFind(reason, "trailing") >= 0 || 
            StringFind(reason, "Exit Signal") >= 0) {  // Added exit signal check
             
             m_awaitingOppositeSignal = true;
-            m_lastClosedDirection = currentDirection;
+            //m_lastClosedDirection = currentDirection;
             
             string logMessage;
             if(StringFind(reason, "Exit Signal") >= 0) {

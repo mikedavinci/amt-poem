@@ -22,7 +22,9 @@ private:
     bool            m_tradeLondon;       // Allow trading in London session
     bool            m_tradeNewYork;      // Allow trading in NY session
     bool            m_allowOverlap;      // Allow trading during session overlaps
-    
+    static datetime s_lastHolidayCheck;  // Static timestamp for holiday checks
+    static datetime s_lastSessionCheck;  // Static timestamp for session checks
+
     // Session time checking
     bool IsInSession(int startHour, int endHour) const {
         int currentHour = TimeHour(TimeCurrent());
@@ -111,6 +113,8 @@ public:
           m_tradeLondon(tradeLondon),
           m_tradeNewYork(tradeNewYork),
           m_allowOverlap(allowOverlap) {
+        if(s_lastHolidayCheck == 0) s_lastHolidayCheck = TimeCurrent();
+        if(s_lastSessionCheck == 0) s_lastSessionCheck = TimeCurrent();
     }
     
     // Check if market is currently open
@@ -123,13 +127,21 @@ public:
         // Check if it's weekend
         int dayOfWeek = TimeDayOfWeek(TimeCurrent());
         if(dayOfWeek == SATURDAY || dayOfWeek == SUNDAY) {
-            Logger.Debug("Market closed - Weekend");
+            datetime currentTime = TimeCurrent();
+            if(currentTime - s_lastSessionCheck >= 300) { // Log every 5 minutes
+                Logger.Debug("Market closed - Weekend");
+                s_lastSessionCheck = currentTime;
+            }
             return false;
         }
         
-        // Check for holidays
+        // Check for holidays with rate-limited logging
+        datetime currentTime = TimeCurrent();
         if(IsHoliday()) {
-            Logger.Debug("Market closed - Holiday");
+            if(currentTime - s_lastHolidayCheck >= 300) { // Log every 5 minutes
+                Logger.Debug("Market closed - Holiday");
+                s_lastHolidayCheck = currentTime;
+            }
             return false;
         }
         
@@ -188,13 +200,19 @@ public:
         
         // Check fixed holidays
         if(IsFixedHoliday(month, day)) {
-            Logger.Debug("Fixed holiday detected");
+            if(currentTime - s_lastHolidayCheck >= 300) { // Log every 5 minutes
+                Logger.Debug("Fixed holiday detected");
+                s_lastHolidayCheck = currentTime;
+            }
             return true;
         }
         
         // Check movable holidays
         if(IsMovableHoliday(year, month, day, dayOfWeek)) {
-            Logger.Debug("Movable holiday detected");
+            if(currentTime - s_lastHolidayCheck >= 300) { // Log every 5 minutes
+                Logger.Debug("Movable holiday detected");
+                s_lastHolidayCheck = currentTime;
+            }
             return true;
         }
         
@@ -204,13 +222,19 @@ public:
         
         // Good Friday (2 days before Easter)
         if(month == easterMonth && day == easterDay - 2) {
-            Logger.Debug("Good Friday holiday");
+            if(currentTime - s_lastHolidayCheck >= 300) { // Log every 5 minutes
+                Logger.Debug("Good Friday holiday");
+                s_lastHolidayCheck = currentTime;
+            }
             return true;
         }
         
         // Easter Monday
         if(month == easterMonth && day == easterDay + 1) {
-            Logger.Debug("Easter Monday holiday");
+            if(currentTime - s_lastHolidayCheck >= 300) { // Log every 5 minutes
+                Logger.Debug("Easter Monday holiday");
+                s_lastHolidayCheck = currentTime;
+            }
             return true;
         }
         
@@ -269,3 +293,7 @@ public:
     void EnableNewYorkSession(bool enable) { m_tradeNewYork = enable; }
     void EnableSessionOverlap(bool enable) { m_allowOverlap = enable; }
 };
+
+// Initialize static members
+datetime CSessionManager::s_lastHolidayCheck = 0;
+datetime CSessionManager::s_lastSessionCheck = 0;
