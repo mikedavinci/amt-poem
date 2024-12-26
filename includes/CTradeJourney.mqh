@@ -968,7 +968,7 @@ bool ValidateSignal(const SignalData& signal) {
     //+------------------------------------------------------------------+
 //| Check and apply profit protection                                  |
 //+------------------------------------------------------------------+
-void CheckProfitProtection(const PositionMetrics &metrics) {
+void DEPRECATED_CheckProfitProtection(const PositionMetrics &metrics) {
     if(m_currentSymbol != Symbol()) {
         Logger.Error(StringFormat(
             "Symbol mismatch in CheckProfitProtection - Current: %s, MT4: %s",
