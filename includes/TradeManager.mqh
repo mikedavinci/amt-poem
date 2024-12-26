@@ -918,8 +918,124 @@ bool ClosePosition(int ticket, string reason = "") {
     return success;
 }
 
-    // Position Modification Methods
 bool ModifyPosition(int ticket, double sl, double tp = 0) {
+    // Validate symbol
+    if(m_symbolInfo.GetSymbol() != Symbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in ModifyPosition - Expected: %s, Got: %s",
+            Symbol(), m_symbolInfo.GetSymbol()));
+        return false;
+    }
+
+    if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
+        LogTradeError("Order select failed", GetLastError());
+        return false;
+    }
+
+    // Get current position details
+    double openPrice = OrderOpenPrice();
+    double currentSL = OrderStopLoss();
+    int orderType = OrderType();
+    double currentPrice = orderType == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+    // Emergency stop validation
+    bool isEmergencyStop = false;
+    if(m_symbolInfo.IsCryptoPair()) {
+        double emergencyDistance = openPrice * (CRYPTO_EMERGENCY_STOP_PERCENT / 100.0);
+        if(orderType == OP_BUY) {
+            isEmergencyStop = currentPrice < openPrice - emergencyDistance;
+        } else {
+            isEmergencyStop = currentPrice > openPrice + emergencyDistance;
+        }
+    } else {
+        double emergencyPips = FOREX_EMERGENCY_PIPS * m_symbolInfo.GetPipSize();
+        if(orderType == OP_BUY) {
+            isEmergencyStop = currentPrice < openPrice - emergencyPips;
+        } else {
+            isEmergencyStop = currentPrice > openPrice + emergencyPips;
+        }
+    }
+
+    // Only proceed if this is an emergency stop modification
+    if(!isEmergencyStop) {
+        Logger.Warning(StringFormat(
+            "Stop loss modification rejected - Not an emergency stop:" +
+            "\nTicket: %d" +
+            "\nDirection: %s" +
+            "\nCurrent Price: %.5f" +
+            "\nOpen Price: %.5f" +
+            "\nProposed SL: %.5f",
+            ticket,
+            orderType == OP_BUY ? "BUY" : "SELL",
+            currentPrice,
+            openPrice,
+            sl));
+        return false;
+    }
+
+    // Emergency stop validation
+    if(orderType == OP_BUY && sl >= currentPrice) {
+        Logger.Error(StringFormat(
+            "Invalid emergency stop for BUY - Must be below current price:" +
+            "\nCurrent Price: %.5f" +
+            "\nProposed SL: %.5f",
+            currentPrice, sl));
+        return false;
+    }
+    if(orderType == OP_SELL && sl <= currentPrice) {
+        Logger.Error(StringFormat(
+            "Invalid emergency stop for SELL - Must be above current price:" +
+            "\nCurrent Price: %.5f" +
+            "\nProposed SL: %.5f",
+            currentPrice, sl));
+        return false;
+    }
+
+    // Log modification attempt
+    Logger.Debug(StringFormat(
+        "Emergency Stop Modification:" +
+        "\nTicket: %d" +
+        "\nDirection: %s" +
+        "\nOpen Price: %.5f" +
+        "\nCurrent Price: %.5f" +
+        "\nCurrent SL: %.5f" +
+        "\nEmergency SL: %.5f",
+        ticket,
+        orderType == OP_BUY ? "BUY" : "SELL",
+        openPrice,
+        currentPrice,
+        currentSL,
+        sl
+    ));
+
+    // Proceed with modification
+    bool success = OrderModify(ticket, openPrice, sl, tp, 0);
+
+    if(success) {
+        Logger.Info(StringFormat(
+            "Emergency stop modification successful:" +
+            "\nTicket: %d" +
+            "\nDirection: %s" +
+            "\nOpen Price: %.5f" +
+            "\nOld SL: %.5f" +
+            "\nNew Emergency SL: %.5f" +
+            "\nCurrent Price: %.5f",
+            ticket,
+            orderType == OP_BUY ? "BUY" : "SELL",
+            openPrice,
+            currentSL,
+            sl,
+            currentPrice
+        ));
+    } else {
+        LogTradeError("Emergency stop modification failed", GetLastError());
+    }
+
+    return success;
+}
+
+    // Position Modification Methods
+bool Version2ModifyPosition(int ticket, double sl, double tp = 0) {
 
     // Validate symbol
         if(m_symbolInfo.GetSymbol() != Symbol()) {
