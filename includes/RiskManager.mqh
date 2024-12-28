@@ -23,52 +23,52 @@ private:
     double          m_marginBuffer;     // Margin safety buffer (percentage)
 
 
-bool ValidateRiskLevels(double positionRisk, string context = "") {  
+bool ValidateRiskLevels(double positionRisk, string context = "") {
     double accountBalance = AccountBalance();
     if(accountBalance <= 0) {
         Logger.Error("Invalid account balance");
         return false;
     }
 
-    // For emergency stops, use special handling
     bool isEmergencyStop = (StringFind(context, "Emergency") >= 0);
-    
-    // Calculate risk percentages
     double riskPercent = (positionRisk / accountBalance) * 100;
     double totalRisk = CalculateTotalAccountRisk() + positionRisk;
     double totalRiskPercent = (totalRisk / accountBalance) * 100;
 
-    // Check trade risk percent (this is what we were missing)
-    if(riskPercent > m_riskPercent && !isEmergencyStop) {
-        Logger.Warning(StringFormat(
-            "[%s] Trade risk %.2f%% exceeds allowed risk per trade %.2f%%",
-            context, riskPercent, m_riskPercent
-        ));
-        return false;
-    }
-
-    // Check max account risk
-    if(totalRiskPercent > m_maxAccountRisk) {
-        Logger.Warning(StringFormat(
-            "[%s] Total account risk %.2f%% exceeds maximum allowed %.2f%%",
-            context, totalRiskPercent, m_maxAccountRisk
-        ));
-        return false;
-    }
-
     Logger.Debug(StringFormat(
         "Risk Validation [%s]:" +
-        "\nTrade Risk: %.2f%% (Limit: %.2f%%)" +
-        "\nTotal Risk: %.2f%% (Limit: %.2f%%)" +
+        "\nRisk Amount: %.2f" +
+        "\nRisk Percent: %.2f%% (Limit: %.2f%%)" +
+        "\nTotal Risk: %.2f" +
+        "\nTotal Risk Percent: %.2f%% (Limit: %.2f%%)" +
         "\nEmergency Stop: %s",
         context,
+        positionRisk,
         riskPercent, m_riskPercent,
+        totalRisk,
         totalRiskPercent, m_maxAccountRisk,
         isEmergencyStop ? "Yes" : "No"
     ));
 
+    if(riskPercent > m_riskPercent && !isEmergencyStop) {
+        Logger.Warning(StringFormat(
+            "Trade risk %.2f%% exceeds allowed risk per trade %.2f%%",
+            riskPercent, m_riskPercent
+        ));
+        return false;
+    }
+
+    if(totalRiskPercent > m_maxAccountRisk) {
+        Logger.Warning(StringFormat(
+            "Total account risk %.2f%% exceeds maximum allowed %.2f%%",
+            totalRiskPercent, m_maxAccountRisk
+        ));
+        return false;
+    }
+
     return true;
 }
+
 
 public:
 // Calculate monetary risk for a position
@@ -436,10 +436,25 @@ double CalculateTotalAccountRisk() {
 }
 
 bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int orderType) {
+    // First log the validation attempt with proper formatting
+    Logger.Debug(StringFormat(
+        "Validating Position Risk:" +
+        "\nOrder Type: %s" +
+        "\nLots: %.2f" +
+        "\nEntry Price: %.5f" +
+        "\nStop Loss: %.5f",
+        orderType == OP_BUY ? "BUY" : "SELL",
+        lots,
+        entryPrice,
+        stopLoss
+    ));
 
     if(lots <= 0 || entryPrice <= 0 || stopLoss <= 0) {
         Logger.Error(StringFormat(
-            "Invalid risk parameters - Lots: %.2f, Entry: %.5f, SL: %.5f",
+            "Invalid risk parameters:" +
+            "\nLots: %.2f" +
+            "\nEntry Price: %.5f" +
+            "\nStop Loss: %.5f",
             lots, entryPrice, stopLoss
         ));
         return false;
@@ -469,16 +484,27 @@ bool ValidatePositionRisk(double lots, double entryPrice, double stopLoss, int o
         "Risk Validation - %s:" +
         "\nStop Loss Type: %s" +
         "\nLots: %.2f" +
-        "\nEntry: %.5f" +
+        "\nEntry Price: %.5f" +
         "\nStop Loss: %.5f" +
+        "\nStop Distance: %.5f" +
         "\nRisk Amount: %.2f" +
         "\nEmergency Stop: %s",
         orderType == OP_BUY ? "BUY" : "SELL",
-        lots, entryPrice, stopLoss, positionRisk,
+        isEmergencyStop ? "Emergency" : "Normal",
+        lots,
+        entryPrice,
+        stopLoss,
+        stopDistance,
+        positionRisk,
         isEmergencyStop ? "Yes" : "No"
     ));
-    
-    return ValidateRiskLevels(positionRisk, isEmergencyStop ? "Emergency" : "Position Risk");
+
+    // Validate against risk levels
+    return ValidateRiskLevels(
+        positionRisk, 
+        isEmergencyStop ? "Emergency" : StringFormat("%s Position Risk", 
+            orderType == OP_BUY ? "BUY" : "SELL")
+    );
 }
 
     bool ValidateNewPosition(double lots, double entryPrice, double stopLoss, int orderType) {
