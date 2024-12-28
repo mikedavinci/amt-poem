@@ -13,7 +13,11 @@
 #define ERR_CUSTOM_CRITICAL          (ERR_CUSTOM_START + 2)
 
 // Tolerance
-#define ENTRY_PRICE_TOLERANCE_PERCENT 0.1  // 0.1% tolerance for entry price
+#define ENTRY_PRICE_TOLERANCE_PERCENT 1.0  // 1.0% tolerance for entry price
+#define FOREX_ENTRY_TOLERANCE_PERCENT   0.5   // Keep 0.5% for forex
+#define BTC_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for BTC
+#define ETH_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for ETH
+#define LTC_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for LTC
 
 // Forex Constants
 #define FOREX_CONTRACT_SIZE          100000
@@ -78,7 +82,7 @@
 #define API_RETRY_INTERVAL      5000      // 5 second between retries
 #define INITIAL_RETRY_DELAY     100       // 100ms initial delay
 #define MAX_RETRY_DELAY         5000      // 5 seconds maximum delay
-#define SIGNAL_CHECK_INTERVAL    3600    // Check signals every hour (3600 seconds)
+#define SIGNAL_CHECK_INTERVAL    1800    // Check signals every half hour (1800 seconds)
 #define RISK_CHECK_INTERVAL        300    // Check risk every 5 minutes
 
 #define GLOBAL_VAR_PREFIX "AMT_POEM_"

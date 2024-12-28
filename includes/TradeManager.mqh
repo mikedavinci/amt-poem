@@ -174,24 +174,42 @@ void LoadTradeState() {
     bool ValidateEntryPrice(double signalPrice, double currentPrice, int type) {
         if(signalPrice <= 0 || currentPrice <= 0) return false;
 
+        // Select tolerance based on instrument
+        double tolerance = FOREX_ENTRY_TOLERANCE_PERCENT;
+        string symbol = m_symbolInfo.GetSymbol();
+        
+        if(StringFind(symbol, "BTC") >= 0) {
+            tolerance = BTC_ENTRY_TOLERANCE_PERCENT;
+        }
+        else if(StringFind(symbol, "ETH") >= 0) {
+            tolerance = ETH_ENTRY_TOLERANCE_PERCENT;
+        }
+        else if(StringFind(symbol, "LTC") >= 0) {
+            tolerance = LTC_ENTRY_TOLERANCE_PERCENT;
+        }
+
         double deviation = MathAbs(1 - (currentPrice / signalPrice)) * 100;
 
+        // Log the deviation check
+        Logger.Debug(StringFormat(
+            "Price Deviation Check:" +
+            "\nSymbol: %s" +
+            "\nTolerance: %.1f%%" +
+            "\nDeviation: %.2f%%" +
+            "\nSignal Price: %.5f" +
+            "\nCurrent Price: %.5f",
+            symbol,
+            tolerance,
+            deviation,
+            signalPrice,
+            currentPrice
+        ));
+
         // If price has moved too far from signal price, reject entry
-        if(deviation > ENTRY_PRICE_TOLERANCE_PERCENT) {
+        if(deviation > tolerance) {
             Logger.Warning(StringFormat(
                 "Entry price deviation too high: %.2f%%. Signal: %.5f, Current: %.5f",
                 deviation, signalPrice, currentPrice));
-            return false;
-        }
-
-        // For buy orders, current price should not be significantly higher than signal
-        // For sell orders, current price should not be significantly lower than signal
-        if(type == OP_BUY && currentPrice > signalPrice * (1 + ENTRY_PRICE_TOLERANCE_PERCENT/100.0)) {
-            Logger.Warning("Buy price too high compared to signal price");
-            return false;
-        }
-        if(type == OP_SELL && currentPrice < signalPrice * (1 - ENTRY_PRICE_TOLERANCE_PERCENT/100.0)) {
-            Logger.Warning("Sell price too low compared to signal price");
             return false;
         }
 
