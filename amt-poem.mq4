@@ -26,10 +26,10 @@ extern string SYSTEM_NAME = "EA-TradeJourney";                                  
 extern string TIMEFRAME = "60";                                               // Timeframe parameter
 
 // Risk Management
-extern double RISK_PERCENT = 3.0;                    // Risk percentage per trade
+extern double RISK_PERCENT = 5.0;                    // Risk percentage per trade
 extern double MARGIN_BUFFER = 50.0;                  // Margin buffer percentage
 // extern bool ENABLE_PROFIT_PROTECTION = false;         // Enable profit protection
-extern double MAX_ACCOUNT_RISK = 5.0;               // Maximum total account risk
+extern double MAX_ACCOUNT_RISK = 10.0;               // Maximum total account risk
 
 // Session Settings
 extern bool TRADE_ASIAN_SESSION = true;             // Trade during Asian session

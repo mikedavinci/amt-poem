@@ -210,7 +210,7 @@ double CalculatePositionRisk(double lots, double entryPrice, double stopLoss, in
             ));
         }
     
-    // Calculate position size based on risk parameters
+// Calculate position size based on risk parameters
 double CalculatePositionSize(double entryPrice, double stopLoss, int orderType) { 
       // Initial parameter validation with detailed logging
       if(entryPrice <= 0 || stopLoss <= 0) {
@@ -359,7 +359,7 @@ double CalculatePositionSize(double entryPrice, double stopLoss, int orderType) 
       }
 
       // Apply broker constraints
-      double minLot = MarketInfo(m_symbolInfo.GetSymbol(), MODE_MINLOT);
+      double minLot = MathMax(0.02, MarketInfo(m_symbolInfo.GetSymbol(), MODE_MINLOT));
       double maxLot = MarketInfo(m_symbolInfo.GetSymbol(), MODE_MAXLOT);
       double lotStep = MarketInfo(m_symbolInfo.GetSymbol(), MODE_LOTSTEP);
 

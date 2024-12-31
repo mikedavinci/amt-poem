@@ -35,7 +35,7 @@
 #define CRYPTO_MARGIN_PERCENT_LTC   0.01     // 1.0%
 
 // Risk Management Constants
-#define DEFAULT_RISK_PERCENT        3.0  
+#define DEFAULT_RISK_PERCENT        5.0  
 #define MAX_POSITIONS_PER_SYMBOL    1
 #define MAX_RETRY_ATTEMPTS          3
 #define DEFAULT_SLIPPAGE           5
