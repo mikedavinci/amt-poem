@@ -43,7 +43,7 @@
 
 // Regular Stops
 // #define FOREX_STOP_PIPS           80
- #define CRYPTO_STOP_PERCENT       3.0 // Risk per Tade for crypto
+ #define CRYPTO_STOP_PERCENT       5.0 // Risk per Tade for crypto
 
 // Emergency Stops
 #define FOREX_EMERGENCY_PIPS      80
