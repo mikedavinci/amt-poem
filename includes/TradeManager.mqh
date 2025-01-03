@@ -495,6 +495,30 @@ void CheckTrailingStop() {
             return CLOSE_MANUAL;
         }
 
+        // Add new member variables
+    bool m_partialExitTaken;
+    double m_originalPositionSize;
+
+    void SavePartialExitState(bool taken) {
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
+        GlobalVariableSet(symbolPrefix + "PARTIAL_EXIT_TAKEN", taken ? 1 : 0);
+    }
+
+    bool LoadPartialExitState() {
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
+        return GlobalVariableGet(symbolPrefix + "PARTIAL_EXIT_TAKEN") == 1;
+    }
+
+    void SaveOriginalSize(double size) {
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
+        GlobalVariableSet(symbolPrefix + "ORIGINAL_POSITION_SIZE", size);
+    }
+
+    double LoadOriginalSize() {
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
+        return GlobalVariableGet(symbolPrefix + "ORIGINAL_POSITION_SIZE");
+    }
+
 public:
     // Constructor
     CTradeManager(CSymbolInfo* symbolInfo, CRiskManager* riskManager, int slippage = DEFAULT_SLIPPAGE,
@@ -536,34 +560,56 @@ void ProcessExitSignal(const SignalData& signal) {
                                  (OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH);
                
                if(matchingExit) {
-                   // For Bullish Exit - Close BUY positions and wait for SELL
-                   if(signal.exitType == EXIT_BULLISH && OrderType() == OP_BUY) {
-                       if(ClosePosition(OrderTicket(), "Bullish Exit Signal")) {
-                           m_awaitingOppositeSignal = true;
-                           m_lastClosedDirection = SIGNAL_BUY;
+                   // Load partial exit state
+                   bool partialExitTaken = LoadPartialExitState();
+                   double originalSize = LoadOriginalSize();
+                   
+                   // First exit signal - partial exit
+                   if(!partialExitTaken) {
+                       double currentLots = OrderLots();
+                       SaveOriginalSize(currentLots); // Save original size
+                       double partialLots = NormalizeDouble(currentLots * (PARTIAL_EXIT_PERCENT / 100.0), 2);
+                       
+                       if(ClosePartialPosition(OrderTicket(), partialLots, "Partial Exit Signal")) {
+                           SavePartialExitState(true);
                            Logger.Info(StringFormat(
-                               "Closed BUY position on Bullish Exit:" +
+                               "Partial exit executed:" +
                                "\nTicket: %d" +
-                               "\nClose Price: %.5f" +
-                               "\nNow awaiting SELL signal",
+                               "\nOriginal Size: %.2f" +
+                               "\nClosed Size: %.2f (%.1f%%)" +
+                               "\nRemaining: %.2f (%.1f%%)",
                                OrderTicket(),
-                               m_symbolInfo.GetBid()
+                               currentLots,
+                               partialLots,
+                               PARTIAL_EXIT_PERCENT,
+                               currentLots - partialLots,
+                               REMAINING_VOLUME_PERCENT
                            ));
-                           SaveTradeState();
                        }
                    }
-                   // For Bearish Exit - Close SELL positions and wait for BUY
-                   else if(signal.exitType == EXIT_BEARISH && OrderType() == OP_SELL) {
-                       if(ClosePosition(OrderTicket(), "Bearish Exit Signal")) {
-                           m_awaitingOppositeSignal = true;
-                           m_lastClosedDirection = SIGNAL_SELL;
+                   // Second exit signal - close remaining position
+                   else {
+                       if(ClosePosition(OrderTicket(), "Full Exit Signal")) {
+                           // m_awaitingOppositeSignal is set inside ClosePosition
+                           // Update last closed direction
+                           m_lastClosedDirection = OrderType() == OP_BUY ? SIGNAL_BUY : SIGNAL_SELL;
+                           
+                           // Reset partial exit state
+                           SavePartialExitState(false);
+                           SaveOriginalSize(0);
+                           
                            Logger.Info(StringFormat(
-                               "Closed SELL position on Bearish Exit:" +
+                               "Closed remaining position:" +
                                "\nTicket: %d" +
+                               "\nDirection: %s" +
                                "\nClose Price: %.5f" +
-                               "\nNow awaiting BUY signal",
+                               "\nAwaiting opposite signal set to: %s" +
+                               "\nLast closed direction: %s",
                                OrderTicket(),
-                               m_symbolInfo.GetAsk()
+                               OrderType() == OP_BUY ? "BUY" : "SELL",
+                               OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk(),
+                               m_awaitingOppositeSignal ? "YES" : "NO",
+                               m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
                            ));
                            SaveTradeState();
                        }
@@ -583,6 +629,34 @@ void ProcessExitSignal(const SignalData& signal) {
        }
    }
 }
+
+bool ClosePartialPosition(int ticket, double lots, string reason = "") {
+        if(!OrderSelect(ticket, SELECT_BY_POS, MODE_TRADES)) {
+            Logger.Error("Failed to select order for partial close");
+            return false;
+        }
+
+        double closePrice = OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+        bool success = OrderClose(ticket, lots, closePrice, m_slippage, clrRed);
+
+        if(success) {
+            Logger.Trade(StringFormat(
+                "Partial position closed:" +
+                "\nTicket: %d" +
+                "\nLots Closed: %.2f" +
+                "\nClose Price: %.5f" +
+                "\nReason: %s",
+                ticket,
+                lots,
+                closePrice,
+                reason
+            ));
+        } else {
+            LogTradeError("Partial close failed", GetLastError());
+        }
+
+        return success;
+    }
     
     // Trade Execution Methods
 bool OpenBuyPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
@@ -753,8 +827,17 @@ bool ClosePosition(int ticket, string reason = "") {
         // Always update last closed direction
         m_lastClosedDirection = currentDirection;
         
-        // Always set awaiting opposite signal flag for any close reason
-        m_awaitingOppositeSignal = true;
+        // Only set awaiting opposite signal for full position closures
+        // Check if this is a full exit signal or non-partial close
+        bool isFullExit = (reason == "Full Exit Signal" || 
+                          StringFind(reason, "Partial") == -1);
+        
+        if(isFullExit) {
+            m_awaitingOppositeSignal = true;
+            Logger.Info("Setting awaiting opposite signal after full position closure");
+        } else {
+            Logger.Info("Partial closure - not setting awaiting opposite signal");
+        }
 
         // Determine close reason for logging
         string closeReasonStr;
@@ -765,7 +848,7 @@ bool ClosePosition(int ticket, string reason = "") {
         else closeReasonStr = "MANUAL CLOSE";
 
         Logger.Trade(StringFormat(
-            "POSITION CLOSED - AWAITING OPPOSITE SIGNAL" +
+            isFullExit ? "POSITION CLOSED - AWAITING OPPOSITE SIGNAL" : "PARTIAL POSITION CLOSED" +
             "\n----------------------------------------" +
             "\nSymbol: %s" +
             "\nTicket: %d" +
@@ -775,7 +858,8 @@ bool ClosePosition(int ticket, string reason = "") {
             "\nStop Loss: %.5f" +
             "\nClose Price: %.5f" +
             "\nP/L: %.2f" +
-            "\nNext Valid Direction: %s" +
+            "\nAwaiting Opposite: %s" +
+            (isFullExit ? "\nNext Valid Direction: %s" : "") +
             "\nClose Time: %s",
             m_symbolInfo.GetSymbol(),
             ticket,
@@ -785,7 +869,8 @@ bool ClosePosition(int ticket, string reason = "") {
             stopLoss,
             closePrice,
             m_lastTrade.profit,
-            currentDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY",
+            m_awaitingOppositeSignal ? "YES" : "NO",
+            isFullExit ? (currentDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY") : "",
             TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS)
         ));
         

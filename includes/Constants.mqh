@@ -82,7 +82,7 @@
 #define API_RETRY_INTERVAL      5000      // 5 second between retries
 #define INITIAL_RETRY_DELAY     100       // 100ms initial delay
 #define MAX_RETRY_DELAY         5000      // 5 seconds maximum delay
-#define SIGNAL_CHECK_INTERVAL    1800    // Check signals every half hour (1800 seconds)
+#define SIGNAL_CHECK_INTERVAL    300    // Check signals every 5 min (300 seconds)
 #define RISK_CHECK_INTERVAL        300    // Check risk every 5 minutes
 
 #define GLOBAL_VAR_PREFIX "AMT_POEM_"
@@ -94,3 +94,16 @@
 #define GLOBAL_LAST_TRADE_TYPE GLOBAL_VAR_PREFIX + "LAST_TRADE_TYPE"
 #define GLOBAL_LAST_TRADE_LOTS GLOBAL_VAR_PREFIX + "LAST_TRADE_LOTS"
 #define GLOBAL_LAST_TRADE_PRICE GLOBAL_VAR_PREFIX + "LAST_TRADE_PRICE"
+
+// Exit States
+#define EXIT_STATE_NONE 0
+#define EXIT_STATE_PARTIAL 1
+#define EXIT_STATE_COMPLETE 2
+
+// Global Variable Names
+#define GV_PARTIAL_EXIT "_PARTIAL_EXIT"
+#define GV_ORIGINAL_VOLUME "_ORIGINAL_VOLUME"
+
+// Exit Volume Percentages
+#define PARTIAL_EXIT_PERCENT 25.0
+#define REMAINING_VOLUME_PERCENT 75.0
