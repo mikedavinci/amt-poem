@@ -30,6 +30,9 @@ private:
     string          m_currentSymbol;         // Current symbol being traded
     datetime        m_lastCheck;             // Last check timestamp
     datetime        m_lastSignalTimestamp;   // Last signal timestamp
+    datetime        m_lastExitSignalTime;    // Last exit signal timestamp
+    bool            m_partialExitTaken;      // Track partial exit state
+    double          m_originalPositionSize;  // Original position size before partial exit
 
      string GetSymbol() const {
         return m_symbolInfo ? m_symbolInfo.GetSymbol() : "";
@@ -51,31 +54,99 @@ private:
         return true;
     }
 
-    void SaveTradeState() {
-        if(m_symbolInfo.GetSymbol() != Symbol()) return;
+    bool IsNewExitSignal(const SignalData& signal) {
+        if(!ValidateSymbol()) return false;
         
-        string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
-        datetime currentTime = TimeCurrent();  // Get current time explicitly
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
+        datetime lastSignalTime = 0;
         
-        // Add timestamp saves
-        GlobalVariableSet(symbolPrefix + "LAST_CHECK_TIME", (double)currentTime);
-        GlobalVariableSet(symbolPrefix + "LAST_SIGNAL_TIME", (double)m_lastSignalTimestamp);
+        // Load last exit signal timestamp
+        if(GlobalVariableCheck(symbolPrefix + "LAST_EXIT_SIGNAL")) {
+            lastSignalTime = (datetime)GlobalVariableGet(symbolPrefix + "LAST_EXIT_SIGNAL");
+        }
+
+        Logger.Debug(StringFormat(
+            "Checking exit signal timestamp:" +
+            "\nNew Signal: %s" +
+            "\nLast Signal: %s",
+            TimeToString(signal.timestamp),
+            TimeToString(lastSignalTime)
+        ));
+
+        // If timestamps match or new signal is older, reject it
+        if(signal.timestamp <= lastSignalTime) {
+            Logger.Warning(StringFormat(
+                "Exit signal timestamp validation failed:" +
+                "\nCurrent: %s" +
+                "\nLast Exit: %s",
+                TimeToString(signal.timestamp),
+                TimeToString(lastSignalTime)
+            ));
+            return false;
+        }
         
-        GlobalVariableSet(symbolPrefix + "AWAITING_OPPOSITE", m_awaitingOppositeSignal ? 1 : 0);
-        GlobalVariableSet(symbolPrefix + "LAST_DIRECTION", (double)m_lastClosedDirection);
+        return true;
+    }
+
+    void SaveSignalTimestamp(datetime timestamp) {
+        if(!ValidateSymbol()) return;
         
-        // Save last trade info
-        GlobalVariableSet(symbolPrefix + "LAST_TRADE_TICKET", m_lastTrade.ticket);
-        GlobalVariableSet(symbolPrefix + "LAST_TRADE_TYPE", (double)m_lastTrade.direction);
-        GlobalVariableSet(symbolPrefix + "LAST_TRADE_LOTS", m_lastTrade.lots);
-        GlobalVariableSet(symbolPrefix + "LAST_TRADE_PRICE", m_lastTrade.openPrice);
+        string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
+        
+        // Save the timestamp
+        GlobalVariableSet(symbolPrefix + "LAST_EXIT_SIGNAL", (double)timestamp);
         
         Logger.Debug(StringFormat(
-            "Saved trade state at %s - AwaitingOpposite: %s, LastDirection: %s",
-            TimeToString(currentTime),
-            m_awaitingOppositeSignal ? "Yes" : "No",
-            m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"));
+            "Saved exit signal timestamp: %s",
+            TimeToString(timestamp)
+        ));
     }
+
+  void SaveTradeState() {
+    if(m_symbolInfo.GetSymbol() != Symbol()) return;
+    
+    string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
+    datetime currentTime = TimeCurrent();  // Get current time explicitly
+    
+    // Add timestamp saves
+    GlobalVariableSet(symbolPrefix + "LAST_CHECK", (double)currentTime);
+    GlobalVariableSet(symbolPrefix + "LAST_SIGNAL", (double)m_lastSignalTimestamp);
+    GlobalVariableSet(symbolPrefix + "LAST_EXIT_SIGNAL", (double)m_lastSignalTimestamp); // Add exit signal timestamp
+    
+    // Save signal state
+    GlobalVariableSet(symbolPrefix + "AWAITING_OPPOSITE", m_awaitingOppositeSignal ? 1 : 0);
+    GlobalVariableSet(symbolPrefix + "LAST_DIRECTION", (double)m_lastClosedDirection);
+    
+    // Save partial exit state
+    GlobalVariableSet(symbolPrefix + "PARTIAL_EXIT_TAKEN", m_partialExitTaken ? 1 : 0);
+    GlobalVariableSet(symbolPrefix + "ORIGINAL_POSITION_SIZE", m_originalPositionSize);
+    
+    // Save last trade info
+    GlobalVariableSet(symbolPrefix + "LAST_TRADE_TICKET", m_lastTrade.ticket);
+    GlobalVariableSet(symbolPrefix + "LAST_TRADE_TYPE", (double)m_lastTrade.direction);
+    GlobalVariableSet(symbolPrefix + "LAST_TRADE_LOTS", m_lastTrade.lots);
+    GlobalVariableSet(symbolPrefix + "LAST_TRADE_PRICE", m_lastTrade.openPrice);
+    
+    // Enhanced logging
+    Logger.Debug(StringFormat(
+        "Saved trade state:" +
+        "\nSymbol: %s" +
+        "\nTime: %s" +
+        "\nAwaiting Opposite: %s" +
+        "\nLast Direction: %s" +
+        "\nPartial Exit Taken: %s" +
+        "\nOriginal Position Size: %.2f" +
+        "\nLast Trade Ticket: %d" +
+        "\nLast Trade Lots: %.2f",
+        Symbol(),
+        TimeToString(currentTime),
+        m_awaitingOppositeSignal ? "Yes" : "No",
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+        m_partialExitTaken ? "Yes" : "No",
+        m_originalPositionSize,
+        m_lastTrade.ticket,
+        m_lastTrade.lots));
+}
     
 void LoadTradeState() {
     if(m_symbolInfo.GetSymbol() != Symbol()) return;
@@ -83,42 +154,50 @@ void LoadTradeState() {
     string symbolPrefix = GLOBAL_VAR_PREFIX + Symbol() + "_";
     
     // Load timestamps with validation
-    if(GlobalVariableCheck(symbolPrefix + "LAST_CHECK_TIME")) {
-        double lastCheckValue = GlobalVariableGet(symbolPrefix + "LAST_CHECK_TIME");
+    if(GlobalVariableCheck(symbolPrefix + "LAST_CHECK")) {
+        double lastCheckValue = GlobalVariableGet(symbolPrefix + "LAST_CHECK");
         if(lastCheckValue > 0) {  
             m_lastCheck = (datetime)lastCheckValue;
         }
     }
     
-    if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL_TIME")) {
-        double lastSignalValue = GlobalVariableGet(symbolPrefix + "LAST_SIGNAL_TIME");
+    if(GlobalVariableCheck(symbolPrefix + "LAST_SIGNAL")) {
+        double lastSignalValue = GlobalVariableGet(symbolPrefix + "LAST_SIGNAL");
         if(lastSignalValue > 0) {  
             m_lastSignalTimestamp = (datetime)lastSignalValue;
         }
     }
     
-     // Load awaiting opposite signal state
-    if(GlobalVariableCheck(symbolPrefix + "AWAITING_OPPOSITE")) {
-        m_awaitingOppositeSignal = (GlobalVariableGet(symbolPrefix + "AWAITING_OPPOSITE") == 1);
-        Logger.Debug(StringFormat(
-            "Loaded awaiting opposite signal state: %s",
-            m_awaitingOppositeSignal ? "Yes" : "No"
-        ));
+    // Load exit signal timestamp
+    if(GlobalVariableCheck(symbolPrefix + "LAST_EXIT_SIGNAL")) {
+        double lastExitValue = GlobalVariableGet(symbolPrefix + "LAST_EXIT_SIGNAL");
+        if(lastExitValue > 0) {
+            m_lastExitSignalTime = (datetime)lastExitValue;
+        }
     }
     
-    // Load last closed direction
+    // Load signal state
+    if(GlobalVariableCheck(symbolPrefix + "AWAITING_OPPOSITE")) {
+        m_awaitingOppositeSignal = (GlobalVariableGet(symbolPrefix + "AWAITING_OPPOSITE") == 1);
+    }
+    
     if(GlobalVariableCheck(symbolPrefix + "LAST_DIRECTION")) {
         double directionValue = GlobalVariableGet(symbolPrefix + "LAST_DIRECTION");
         if(directionValue == SIGNAL_BUY || directionValue == SIGNAL_SELL) {
             m_lastClosedDirection = (ENUM_TRADE_SIGNAL)((int)directionValue);
-            Logger.Debug(StringFormat(
-                "Loaded last closed direction: %s",
-                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
-            ));
         }
     }
+
+    // Load partial exit state
+    if(GlobalVariableCheck(symbolPrefix + "PARTIAL_EXIT_TAKEN")) {
+        m_partialExitTaken = (GlobalVariableGet(symbolPrefix + "PARTIAL_EXIT_TAKEN") == 1);
+    }
+    
+    if(GlobalVariableCheck(symbolPrefix + "ORIGINAL_POSITION_SIZE")) {
+        m_originalPositionSize = GlobalVariableGet(symbolPrefix + "ORIGINAL_POSITION_SIZE");
+    }
         
-    // Load last trade if ticket exists
+    // Load last trade info
     if(GlobalVariableCheck(symbolPrefix + "LAST_TRADE_TICKET")) {
         m_lastTrade.ticket = (int)GlobalVariableGet(symbolPrefix + "LAST_TRADE_TICKET");
         m_lastTrade.direction = (ENUM_TRADE_SIGNAL)((int)GlobalVariableGet(symbolPrefix + "LAST_TRADE_TYPE"));
@@ -128,10 +207,22 @@ void LoadTradeState() {
         
     Logger.Debug(StringFormat(
         "Trade state loaded:" +
+        "\nSymbol: %s" +
         "\nAwaiting Opposite: %s" +
-        "\nLast Direction: %s",
+        "\nLast Direction: %s" +
+        "\nPartial Exit Taken: %s" +
+        "\nOriginal Position Size: %.2f" +
+        "\nLast Check Time: %s" +
+        "\nLast Signal Time: %s" +
+        "\nLast Exit Signal Time: %s",
+        Symbol(),
         m_awaitingOppositeSignal ? "Yes" : "No",
-        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+        m_partialExitTaken ? "Yes" : "No",
+        m_originalPositionSize,
+        TimeToString(m_lastCheck),
+        TimeToString(m_lastSignalTimestamp),
+        TimeToString(m_lastExitSignalTime)
     ));
 }
 
@@ -495,10 +586,6 @@ void CheckTrailingStop() {
             return CLOSE_MANUAL;
         }
 
-        // Add new member variables
-    bool m_partialExitTaken;
-    double m_originalPositionSize;
-
     void SavePartialExitState(bool taken) {
         string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
         GlobalVariableSet(symbolPrefix + "PARTIAL_EXIT_TAKEN", taken ? 1 : 0);
@@ -531,6 +618,13 @@ public:
         m_currentSymbol = m_symbolInfo.GetSymbol();
         LoadTradeState();
     }
+
+    ~CTradeManager() {
+    string symbolPrefix = GLOBAL_VAR_PREFIX + m_currentSymbol + "_";
+    GlobalVariableDel(symbolPrefix + "LAST_EXIT_SIGNAL");
+    GlobalVariableDel(symbolPrefix + "PARTIAL_EXIT_TAKEN");
+    GlobalVariableDel(symbolPrefix + "ORIGINAL_POSITION_SIZE");
+}
 
     bool HasOpenPositionInDirection(ENUM_TRADE_SIGNAL direction) {
         int total = OrdersTotal();

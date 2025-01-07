@@ -92,13 +92,12 @@ bool ValidateMarketConditions() {
     int minADX = isCrypto ? CRYPTO_MIN_ADX : FOREX_MIN_ADX;
 
     // Volume Analysis
-    double currentVolume = iVolume(m_currentSymbol, PERIOD_CURRENT, 0);
-    double volumeMA = 0;
+    long currentVolume = iVolume(m_currentSymbol, PERIOD_CURRENT, 0);
+    long volumeMA = 0;
     for(int i = 0; i < volumePeriod; i++) {
         volumeMA += iVolume(m_currentSymbol, PERIOD_CURRENT, i);
     }
-    volumeMA /= volumePeriod;
-    double volumeRatio = currentVolume / volumeMA;
+    double volumeRatio = (double)currentVolume / ((double)volumeMA / volumePeriod);
 
     // Trend Strength Analysis
     double fastMA = iMA(m_currentSymbol, PERIOD_CURRENT, trendFastMA, 0, MODE_EMA, PRICE_CLOSE, 0);
