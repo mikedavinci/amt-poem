@@ -76,46 +76,77 @@ bool IsTimeToCheck() {
     return true;
 }
 
- bool ValidateMarketConditions() {
-        if(!m_symbolInfo) return false;
+bool ValidateMarketConditions() {
+    if(!m_symbolInfo) return false;
 
-        // Volume Check
-        double currentVolume = iVolume(m_currentSymbol, PERIOD_CURRENT, 0);
-        double volumeMA = 0;
-        for(int i = 0; i < VOLUME_MA_PERIOD; i++) {
-            volumeMA += iVolume(m_currentSymbol, PERIOD_CURRENT, i);
-        }
-        volumeMA /= VOLUME_MA_PERIOD;
-        double volumeRatio = currentVolume / volumeMA;
+    // Determine if we're trading crypto or forex
+    bool isCrypto = m_symbolInfo.IsCryptoPair();
+    
+    // Set parameters based on instrument type
+    int volumePeriod = isCrypto ? CRYPTO_VOLUME_MA_PERIOD : FOREX_VOLUME_MA_PERIOD;
+    double minVolumeRatio = isCrypto ? CRYPTO_MIN_VOLUME_RATIO : FOREX_MIN_VOLUME_RATIO;
+    int trendFastMA = isCrypto ? CRYPTO_TREND_FAST_MA : FOREX_TREND_FAST_MA;
+    int trendSlowMA = isCrypto ? CRYPTO_TREND_SLOW_MA : FOREX_TREND_SLOW_MA;
+    double minTrendStrength = isCrypto ? CRYPTO_MIN_TREND_STRENGTH : FOREX_MIN_TREND_STRENGTH;
+    int adxPeriod = isCrypto ? CRYPTO_ADX_PERIOD : FOREX_ADX_PERIOD;
+    int minADX = isCrypto ? CRYPTO_MIN_ADX : FOREX_MIN_ADX;
 
-        // Trend Strength Check
-        double fastMA = iMA(m_currentSymbol, PERIOD_CURRENT, TREND_FAST_MA, 0, MODE_EMA, PRICE_CLOSE, 0);
-        double slowMA = iMA(m_currentSymbol, PERIOD_CURRENT, TREND_SLOW_MA, 0, MODE_EMA, PRICE_CLOSE, 0);
-        double trendStrength = MathAbs((fastMA - slowMA) / slowMA) * 100;
+    // Volume Analysis
+    double currentVolume = iVolume(m_currentSymbol, PERIOD_CURRENT, 0);
+    double volumeMA = 0;
+    for(int i = 0; i < volumePeriod; i++) {
+        volumeMA += iVolume(m_currentSymbol, PERIOD_CURRENT, i);
+    }
+    volumeMA /= volumePeriod;
+    double volumeRatio = currentVolume / volumeMA;
 
-        // ADX Check
-        double adx = iADX(m_currentSymbol, PERIOD_CURRENT, ADX_PERIOD, PRICE_CLOSE, MODE_MAIN, 0);
+    // Trend Strength Analysis
+    double fastMA = iMA(m_currentSymbol, PERIOD_CURRENT, trendFastMA, 0, MODE_EMA, PRICE_CLOSE, 0);
+    double slowMA = iMA(m_currentSymbol, PERIOD_CURRENT, trendSlowMA, 0, MODE_EMA, PRICE_CLOSE, 0);
+    double trendStrength = MathAbs((fastMA - slowMA) / slowMA) * 100;
 
-        Logger.Debug(StringFormat(
-            "Market Conditions:" +
-            "\nVolume Ratio: %.2f (Min: %.2f)" +
-            "\nTrend Strength: %.2f%% (Min: %.2f%%)" +
-            "\nADX: %.2f (Min: %.2f)",
-            volumeRatio,
-            MIN_VOLUME_RATIO,
-            trendStrength,
-            MIN_TREND_STRENGTH,
-            adx,
-            MIN_ADX
-        ));
+    // ADX Analysis
+    double adx = iADX(m_currentSymbol, PERIOD_CURRENT, adxPeriod, PRICE_CLOSE, MODE_MAIN, 0);
 
-        bool volumeValid = volumeRatio >= MIN_VOLUME_RATIO;
-        bool trendValid = trendStrength >= MIN_TREND_STRENGTH && adx >= MIN_ADX;
+    Logger.Debug(StringFormat(
+        "Market Conditions (%s):" +
+        "\nVolume Ratio: %.2f (Min: %.2f)" +
+        "\nTrend Strength: %.2f%% (Min: %.2f%%)" +
+        "\nADX: %.2f (Min: %.2f)" +
+        "\nInstrument Type: %s",
+        m_currentSymbol,
+        volumeRatio,
+        minVolumeRatio,
+        trendStrength,
+        minTrendStrength,
+        adx,
+        minADX,
+        isCrypto ? "Crypto" : "Forex"
+    ));
 
-        return volumeValid && trendValid;
+    // Final Validation
+    bool volumeValid = volumeRatio >= minVolumeRatio;
+    bool trendValid = trendStrength >= minTrendStrength && adx >= minADX;
+
+    // Add specific logging for rejection reasons
+    if(!volumeValid) {
+        Logger.Warning(StringFormat(
+            "Signal rejected - Insufficient volume (%.2f < %.2f)",
+            volumeRatio, minVolumeRatio));
+    }
+    if(trendStrength < minTrendStrength) {
+        Logger.Warning(StringFormat(
+            "Signal rejected - Weak trend (%.2f%% < %.2f%%)",
+            trendStrength, minTrendStrength));
+    }
+    if(adx < minADX) {
+        Logger.Warning(StringFormat(
+            "Signal rejected - Low ADX (%.2f < %.2f)",
+            adx, minADX));
     }
 
-
+    return volumeValid && trendValid;
+}
 
 public:
     CTradeJourney() {
@@ -294,6 +325,12 @@ public:
 
 void ProcessSignals() {
     if(m_currentSymbol != Symbol()) return;
+
+     // Add market condition check before processing signals
+    if(!ValidateMarketConditions()) {
+        Logger.Info("Skipping signal processing - Invalid market conditions");
+        return;
+    }
 
     // Log current trading state before processing new signals
     Logger.Info(StringFormat(

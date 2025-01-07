@@ -108,10 +108,20 @@
 #define PARTIAL_EXIT_PERCENT 25.0
 #define REMAINING_VOLUME_PERCENT 75.0
 
-#define VOLUME_MA_PERIOD          20     // Volume Moving Average period
-#define MIN_VOLUME_RATIO         1.0     // Minimum ratio to average volume
-#define TREND_FAST_MA            8       // Fast MA for trend detection
-#define TREND_SLOW_MA            21      // Slow MA for trend detection
-#define MIN_TREND_STRENGTH       0.1     // Minimum trend strength percentage
-#define ADX_PERIOD              14       // ADX period for trend strength
-#define MIN_ADX                 20       // Minimum ADX value for trend
+// Crypto Market Conditions (BTCUSD, ETHUSD, LTCUSD)
+#define CRYPTO_VOLUME_MA_PERIOD    20     // Volume Moving Average period
+#define CRYPTO_MIN_VOLUME_RATIO    0.7    // Minimum ratio to average volume
+#define CRYPTO_TREND_FAST_MA       13     // Fast MA for trend detection
+#define CRYPTO_TREND_SLOW_MA       34     // Slow MA for trend detection
+#define CRYPTO_MIN_TREND_STRENGTH  0.3    // Minimum trend strength percentage
+#define CRYPTO_ADX_PERIOD         20     // ADX period for trend strength
+#define CRYPTO_MIN_ADX            25     // Minimum ADX value for trend
+
+// Forex Market Conditions
+#define FOREX_VOLUME_MA_PERIOD     14     // Shorter for forex due to more consistent volume
+#define FOREX_MIN_VOLUME_RATIO     0.8    // Forex needs higher volume confirmation
+#define FOREX_TREND_FAST_MA        8      // Faster MA for forex
+#define FOREX_TREND_SLOW_MA        21     // Standard slow MA for forex
+#define FOREX_MIN_TREND_STRENGTH   0.15   // Lower due to forex having smaller moves
+#define FOREX_ADX_PERIOD          14     // Standard forex ADX period
+#define FOREX_MIN_ADX             20     // Standard minimum ADX for forex
