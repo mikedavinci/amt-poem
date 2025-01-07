@@ -76,6 +76,45 @@ bool IsTimeToCheck() {
     return true;
 }
 
+ bool ValidateMarketConditions() {
+        if(!m_symbolInfo) return false;
+
+        // Volume Check
+        double currentVolume = iVolume(m_currentSymbol, PERIOD_CURRENT, 0);
+        double volumeMA = 0;
+        for(int i = 0; i < VOLUME_MA_PERIOD; i++) {
+            volumeMA += iVolume(m_currentSymbol, PERIOD_CURRENT, i);
+        }
+        volumeMA /= VOLUME_MA_PERIOD;
+        double volumeRatio = currentVolume / volumeMA;
+
+        // Trend Strength Check
+        double fastMA = iMA(m_currentSymbol, PERIOD_CURRENT, TREND_FAST_MA, 0, MODE_EMA, PRICE_CLOSE, 0);
+        double slowMA = iMA(m_currentSymbol, PERIOD_CURRENT, TREND_SLOW_MA, 0, MODE_EMA, PRICE_CLOSE, 0);
+        double trendStrength = MathAbs((fastMA - slowMA) / slowMA) * 100;
+
+        // ADX Check
+        double adx = iADX(m_currentSymbol, PERIOD_CURRENT, ADX_PERIOD, PRICE_CLOSE, MODE_MAIN, 0);
+
+        Logger.Debug(StringFormat(
+            "Market Conditions:" +
+            "\nVolume Ratio: %.2f (Min: %.2f)" +
+            "\nTrend Strength: %.2f%% (Min: %.2f%%)" +
+            "\nADX: %.2f (Min: %.2f)",
+            volumeRatio,
+            MIN_VOLUME_RATIO,
+            trendStrength,
+            MIN_TREND_STRENGTH,
+            adx,
+            MIN_ADX
+        ));
+
+        bool volumeValid = volumeRatio >= MIN_VOLUME_RATIO;
+        bool trendValid = trendStrength >= MIN_TREND_STRENGTH && adx >= MIN_ADX;
+
+        return volumeValid && trendValid;
+    }
+
 
 
 public:

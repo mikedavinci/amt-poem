@@ -107,3 +107,11 @@
 // Exit Volume Percentages
 #define PARTIAL_EXIT_PERCENT 25.0
 #define REMAINING_VOLUME_PERCENT 75.0
+
+#define VOLUME_MA_PERIOD          20     // Volume Moving Average period
+#define MIN_VOLUME_RATIO         1.0     // Minimum ratio to average volume
+#define TREND_FAST_MA            8       // Fast MA for trend detection
+#define TREND_SLOW_MA            21      // Slow MA for trend detection
+#define MIN_TREND_STRENGTH       0.1     // Minimum trend strength percentage
+#define ADX_PERIOD              14       // ADX period for trend strength
+#define MIN_ADX                 20       // Minimum ADX value for trend
