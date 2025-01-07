@@ -547,116 +547,309 @@ public:
     }
 
 void ProcessExitSignal(const SignalData& signal) {
-   Logger.Info(StringFormat("Processing exit signal for %s - Type: %s, TP Price: %.5f", 
-       m_symbolInfo.GetSymbol(),
-       signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
-       signal.price));
+    if(!ValidateSymbol()) return;
 
-   for(int i = OrdersTotal() - 1; i >= 0; i--) {
-       if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-           if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-               // Check if the exit signal matches position type
-               bool matchingExit = (OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) ||
-                                 (OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH);
-               
-               if(matchingExit) {
-                   // Load partial exit state
-                   bool partialExitTaken = LoadPartialExitState();
-                   double originalSize = LoadOriginalSize();
-                   
-                   // First exit signal - partial exit
-                   if(!partialExitTaken) {
-                       double currentLots = OrderLots();
-                       SaveOriginalSize(currentLots); // Save original size
-                       double partialLots = NormalizeDouble(currentLots * (PARTIAL_EXIT_PERCENT / 100.0), 2);
-                       
-                       if(ClosePartialPosition(OrderTicket(), partialLots, "Partial Exit Signal")) {
-                           SavePartialExitState(true);
-                           Logger.Info(StringFormat(
-                               "Partial exit executed:" +
-                               "\nTicket: %d" +
-                               "\nOriginal Size: %.2f" +
-                               "\nClosed Size: %.2f (%.1f%%)" +
-                               "\nRemaining: %.2f (%.1f%%)",
-                               OrderTicket(),
-                               currentLots,
-                               partialLots,
-                               PARTIAL_EXIT_PERCENT,
-                               currentLots - partialLots,
-                               REMAINING_VOLUME_PERCENT
-                           ));
-                       }
-                   }
-                   // Second exit signal - close remaining position
-                   else {
-                       if(ClosePosition(OrderTicket(), "Full Exit Signal")) {
-                           // m_awaitingOppositeSignal is set inside ClosePosition
-                           // Update last closed direction
-                           m_lastClosedDirection = OrderType() == OP_BUY ? SIGNAL_BUY : SIGNAL_SELL;
-                           
-                           // Reset partial exit state
-                           SavePartialExitState(false);
-                           SaveOriginalSize(0);
-                           
-                           Logger.Info(StringFormat(
-                               "Closed remaining position:" +
-                               "\nTicket: %d" +
-                               "\nDirection: %s" +
-                               "\nClose Price: %.5f" +
-                               "\nAwaiting opposite signal set to: %s" +
-                               "\nLast closed direction: %s",
-                               OrderTicket(),
-                               OrderType() == OP_BUY ? "BUY" : "SELL",
-                               OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk(),
-                               m_awaitingOppositeSignal ? "YES" : "NO",
-                               m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
-                           ));
-                           SaveTradeState();
-                       }
-                   }
-               } else {
-                   Logger.Debug(StringFormat(
-                       "Exit signal does not match position:" +
-                       "\nPosition: %s" +
-                       "\nExit Type: %s" +
-                       "\nTicket: %d",
-                       OrderType() == OP_BUY ? "BUY" : "SELL",
-                       signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
-                       OrderTicket()
-                   ));
-               }
-           }
-       }
-   }
+    // Check if this is a new signal
+    if(!IsNewExitSignal(signal)) {
+        Logger.Info(StringFormat(
+            "Skipping duplicate exit signal for %s - Same timestamp: %s",
+            m_symbolInfo.GetSymbol(),
+            signal.timestamp
+        ));
+        return;
+    }
+
+    Logger.Info(StringFormat(
+        "Processing new exit signal for %s:" + 
+        "\nExit Type: %s" +
+        "\nPrice: %.5f" +
+        "\nPattern: %s" +
+        "\nTimestamp: %s",
+        m_symbolInfo.GetSymbol(),
+        signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+        signal.price,
+        signal.pattern,
+        signal.timestamp
+    ));
+
+    bool hasPosition = false;
+    int totalOrders = OrdersTotal();
+    
+    if(totalOrders == 0) {
+        Logger.Warning("No open positions to process exit signal");
+        return;
+    }
+
+    Logger.Debug(StringFormat(
+        "Checking positions for exit:" +
+        "\nSymbol: %s" +
+        "\nExit Type: %s" +
+        "\nTotal Orders: %d",
+        m_symbolInfo.GetSymbol(),
+        signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+        totalOrders
+    ));
+
+    for(int i = totalOrders - 1; i >= 0; i--) {
+        if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            Logger.Error(StringFormat("Failed to select order at position %d", i));
+            continue;
+        }
+
+        if(OrderSymbol() != m_symbolInfo.GetSymbol()) {
+            continue;
+        }
+
+        hasPosition = true;
+        
+        // Check if exit signal matches position type
+        bool matchingExit = (OrderType() == OP_BUY && signal.exitType == EXIT_BULLISH) ||
+                           (OrderType() == OP_SELL && signal.exitType == EXIT_BEARISH);
+        
+        if(!matchingExit) {
+            Logger.Debug(StringFormat(
+                "Exit signal does not match position:" +
+                "\nPosition: %s" +
+                "\nExit Type: %s" +
+                "\nTicket: %d",
+                OrderType() == OP_BUY ? "BUY" : "SELL",
+                signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH",
+                OrderTicket()
+            ));
+            continue;
+        }
+
+        // Load and verify partial exit state
+        bool partialExitTaken = LoadPartialExitState();
+        double originalSize = LoadOriginalSize();
+
+        Logger.Debug(StringFormat(
+            "Position state:" +
+            "\nTicket: %d" +
+            "\nPartial Exit Taken: %s" +
+            "\nOriginal Size: %.2f" +
+            "\nCurrent Size: %.2f",
+            OrderTicket(),
+            partialExitTaken ? "YES" : "NO",
+            originalSize,
+            OrderLots()
+        ));
+
+        // First exit signal - partial exit (25%)
+        if(!partialExitTaken) {
+            double currentLots = OrderLots();
+            if(currentLots <= 0) {
+                Logger.Error("Invalid lot size for partial close");
+                continue;
+            }
+
+            SaveOriginalSize(currentLots); // Save original size
+            double partialLots = NormalizeDouble(currentLots * (PARTIAL_EXIT_PERCENT / 100.0), 2);
+            
+            // Validate partial lot size
+            double minLot = MarketInfo(m_symbolInfo.GetSymbol(), MODE_MINLOT);
+            if(partialLots < minLot) {
+                Logger.Warning(StringFormat(
+                    "Partial lot size (%.2f) below minimum (%.2f) - Using minimum",
+                    partialLots, minLot
+                ));
+                partialLots = minLot;
+            }
+
+            Logger.Info(StringFormat(
+                "Attempting partial exit:" +
+                "\nTicket: %d" +
+                "\nOriginal Size: %.2f" +
+                "\nClosing Size: %.2f (%.1f%%)" +
+                "\nWill Remain: %.2f (%.1f%%)",
+                OrderTicket(),
+                currentLots,
+                partialLots,
+                PARTIAL_EXIT_PERCENT,
+                currentLots - partialLots,
+                REMAINING_VOLUME_PERCENT
+            ));
+            
+            if(ClosePartialPosition(OrderTicket(), partialLots, "Partial Exit Signal")) {
+                SavePartialExitState(true);
+                SaveSignalTimestamp(signal.timestamp);
+                Logger.Trade(StringFormat(
+                    "Partial exit executed successfully:" +
+                    "\nTicket: %d" +
+                    "\nOriginal Size: %.2f" +
+                    "\nClosed Size: %.2f (%.1f%%)" +
+                    "\nRemaining: %.2f (%.1f%%)",
+                    OrderTicket(),
+                    currentLots,
+                    partialLots,
+                    PARTIAL_EXIT_PERCENT,
+                    currentLots - partialLots,
+                    REMAINING_VOLUME_PERCENT
+                ));
+            } else {
+                Logger.Error(StringFormat(
+                    "Failed to execute partial exit:" +
+                    "\nTicket: %d" +
+                    "\nError: %d - %s",
+                    OrderTicket(),
+                    GetLastError(),
+                    ErrorDescription(GetLastError())
+                ));
+            }
+        }
+        // Second exit signal - close remaining position (75%)
+        else {
+            Logger.Info(StringFormat(
+                "Attempting to close remaining position:" +
+                "\nTicket: %d" +
+                "\nOriginal Size: %.2f" +
+                "\nRemaining Size: %.2f",
+                OrderTicket(),
+                originalSize,
+                OrderLots()
+            ));
+
+            if(ClosePosition(OrderTicket(), "Full Exit Signal")) {
+                m_lastClosedDirection = OrderType() == OP_BUY ? SIGNAL_BUY : SIGNAL_SELL;
+                
+                // Reset partial exit state
+                SavePartialExitState(false);
+                SaveOriginalSize(0);
+                SaveSignalTimestamp(signal.timestamp);
+                
+                Logger.Trade(StringFormat(
+                    "Closed remaining position successfully:" +
+                    "\nTicket: %d" +
+                    "\nDirection: %s" +
+                    "\nClose Price: %.5f" +
+                    "\nAwaiting opposite signal: %s" +
+                    "\nLast closed direction: %s",
+                    OrderTicket(),
+                    OrderType() == OP_BUY ? "BUY" : "SELL",
+                    OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk(),
+                    m_awaitingOppositeSignal ? "YES" : "NO",
+                    m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
+                ));
+                SaveTradeState();
+            } else {
+                Logger.Error(StringFormat(
+                    "Failed to close remaining position:" +
+                    "\nTicket: %d" +
+                    "\nError: %d - %s",
+                    OrderTicket(),
+                    GetLastError(),
+                    ErrorDescription(GetLastError())
+                ));
+            }
+        }
+    }
+
+    if(!hasPosition) {
+        Logger.Warning(StringFormat(
+            "No matching positions found for exit signal:" +
+            "\nSymbol: %s" +
+            "\nExit Type: %s",
+            m_symbolInfo.GetSymbol(),
+            signal.exitType == EXIT_BULLISH ? "BULLISH" : "BEARISH"
+        ));
+    }
 }
 
 bool ClosePartialPosition(int ticket, double lots, string reason = "") {
-        if(!OrderSelect(ticket, SELECT_BY_POS, MODE_TRADES)) {
-            Logger.Error("Failed to select order for partial close");
-            return false;
-        }
-
-        double closePrice = OrderType() == OP_BUY ? m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
-        bool success = OrderClose(ticket, lots, closePrice, m_slippage, clrRed);
-
-        if(success) {
-            Logger.Trade(StringFormat(
-                "Partial position closed:" +
-                "\nTicket: %d" +
-                "\nLots Closed: %.2f" +
-                "\nClose Price: %.5f" +
-                "\nReason: %s",
-                ticket,
-                lots,
-                closePrice,
-                reason
-            ));
-        } else {
-            LogTradeError("Partial close failed", GetLastError());
-        }
-
-        return success;
+    if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
+        Logger.Error(StringFormat(
+            "Failed to select order %d for partial close",
+            ticket
+        ));
+        return false;
     }
+
+    if(OrderSymbol() != m_symbolInfo.GetSymbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in partial close - Expected: %s, Got: %s",
+            m_symbolInfo.GetSymbol(), 
+            OrderSymbol()
+        ));
+        return false;
+    }
+
+    // Validate lot size
+    double currentLots = OrderLots();
+    if(lots > currentLots) {
+        Logger.Error(StringFormat(
+            "Invalid lot size for partial close - Current: %.2f, Requested: %.2f",
+            currentLots, 
+            lots
+        ));
+        return false;
+    }
+
+    // Validate minimum lot size
+    double minLot = MarketInfo(m_symbolInfo.GetSymbol(), MODE_MINLOT);
+    if(lots < minLot) {
+        Logger.Error(StringFormat(
+            "Partial close lot size (%.2f) below minimum (%.2f)",
+            lots, 
+            minLot
+        ));
+        return false;
+    }
+
+    // Calculate close price based on position type
+    double closePrice = OrderType() == OP_BUY ? 
+        m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+    Logger.Info(StringFormat(
+        "Attempting partial close:" +
+        "\nTicket: %d" +
+        "\nSymbol: %s" +
+        "\nType: %s" +
+        "\nCurrent Size: %.2f" +
+        "\nClosing Size: %.2f" +
+        "\nClose Price: %.5f" +
+        "\nReason: %s",
+        ticket,
+        OrderSymbol(),
+        OrderType() == OP_BUY ? "BUY" : "SELL",
+        currentLots,
+        lots,
+        closePrice,
+        reason
+    ));
+
+    bool success = OrderClose(ticket, lots, closePrice, m_slippage, clrRed);
+
+    if(success) {
+        Logger.Trade(StringFormat(
+            "Partial close executed:" +
+            "\nTicket: %d" +
+            "\nClosed: %.2f lots" +
+            "\nRemaining: %.2f lots" +
+            "\nClose Price: %.5f" +
+            "\nProfit: %.2f" +
+            "\nReason: %s",
+            ticket,
+            lots,
+            currentLots - lots,
+            closePrice,
+            OrderProfit(),
+            reason
+        ));
+    } else {
+        int error = GetLastError();
+        Logger.Error(StringFormat(
+            "Partial close failed:" +
+            "\nTicket: %d" +
+            "\nError: %d" +
+            "\nDescription: %s",
+            ticket,
+            error,
+            ErrorDescription(error)
+        ));
+    }
+
+    return success;
+}
     
     // Trade Execution Methods
 bool OpenBuyPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
