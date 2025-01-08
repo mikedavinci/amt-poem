@@ -325,12 +325,6 @@ public:
 void ProcessSignals() {
     if(m_currentSymbol != Symbol()) return;
 
-     // Add market condition check before processing signals
-    if(!ValidateMarketConditions()) {
-        Logger.Info("Skipping signal processing - Invalid market conditions");
-        return;
-    }
-
     // Log current trading state before processing new signals
     Logger.Info(StringFormat(
         "CURRENT TRADING STATE" +
@@ -387,7 +381,7 @@ void ProcessSignals() {
             signal.instrumentType = m_symbolInfo.IsCryptoPair() ?
                 INSTRUMENT_CRYPTO : INSTRUMENT_FOREX;
                 
-            // Handle exit signals first
+            // Handle exit signals first - NO market condition validation
             if(signal.isExit) {
                 Logger.Info(StringFormat(
                     "PROCESSING EXIT SIGNAL" +
@@ -423,6 +417,40 @@ void ProcessSignals() {
                     Logger.Error("Trade manager is NULL - cannot process exit signal");
                 }
             } else {
+                // For non-exit signals, first check if we need to close opposite positions
+                if(m_tradeManager != NULL && m_tradeManager.HasOpenPosition()) {
+                    ENUM_TRADE_SIGNAL currentDirection = SIGNAL_NEUTRAL;
+                    
+                    // Check current position direction using TradeManager's methods
+                    if(m_tradeManager.HasOpenPositionInDirection(SIGNAL_BUY)) {
+                        currentDirection = SIGNAL_BUY;
+                    } else if(m_tradeManager.HasOpenPositionInDirection(SIGNAL_SELL)) {
+                        currentDirection = SIGNAL_SELL;
+                    }
+
+                    bool isOppositeSignal = (currentDirection == SIGNAL_BUY && signal.signal == SIGNAL_SELL) ||
+                                        (currentDirection == SIGNAL_SELL && signal.signal == SIGNAL_BUY);
+                    
+                    if(isOppositeSignal) {
+                        Logger.Info(StringFormat(
+                            "CLOSING OPPOSITE POSITION" +
+                            "\n--------------------" +
+                            "\nCurrent Direction: %s" +
+                            "\nNew Signal: %s",
+                            currentDirection == SIGNAL_BUY ? "BUY" : "SELL",
+                            signal.signal == SIGNAL_BUY ? "BUY" : "SELL"
+                        ));
+                        
+                        m_tradeManager.CloseExistingPositions(signal.signal);
+                    }
+                }
+
+                // Only validate market conditions for new position opening
+                if(!ValidateMarketConditions()) {
+                    Logger.Info("Market conditions not valid for new position - skipping entry");
+                    return;
+                }
+
                 // Entry signal processing
                 string allowedDirection = m_awaitingOppositeSignal ? 
                     (m_lastClosedDirection == SIGNAL_BUY ? "SELL ONLY" : "BUY ONLY") : 

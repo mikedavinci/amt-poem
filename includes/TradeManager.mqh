@@ -523,68 +523,16 @@ void CheckTrailingStop() {
             Logger.Error(message);
         }
 
-        bool CloseExistingPositions(ENUM_TRADE_SIGNAL newSignal) {
-            bool allClosed = true;
-            int total = OrdersTotal();
-            int closedCount = 0;
 
-            Logger.Info(StringFormat("Closing existing positions for new %s signal",
-                        newSignal == SIGNAL_BUY ? "BUY" : "SELL"));
 
-            for(int i = total - 1; i >= 0; i--) {
-                if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                    if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                        ENUM_TRADE_SIGNAL currentPos =
-                            (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
-
-                        // Close if signals are opposite
-                        if(currentPos != newSignal) {
-                            double closePrice = OrderType() == OP_BUY ?
-                                m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
-
-                            Logger.Trade(StringFormat(
-                                "Closing position for signal reversal:" +
-                                "\nTicket: %d" +
-                                "\nType: %s" +
-                                "\nLots: %.2f" +
-                                "\nOpen Price: %.5f" +
-                                "\nClose Price: %.5f" +
-                                "\nProfit: %.2f",
-                                OrderTicket(),
-                                OrderType() == OP_BUY ? "BUY" : "SELL",
-                                OrderLots(),
-                                OrderOpenPrice(),
-                                closePrice,
-                                OrderProfit()
-                            ));
-
-                            if(!ClosePosition(OrderTicket(), "Signal reversal")) {
-                                allClosed = false;
-                                Logger.Error(StringFormat("Failed to close position %d for reversal",
-                                    OrderTicket()));
-                            } else {
-                                closedCount++;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if(closedCount > 0) {
-                Logger.Info(StringFormat("Closed %d positions for signal reversal", closedCount));
-            }
-
-            return allClosed;
-        }
-
-        ENUM_CLOSE_REASON StringToCloseReason(string reason) {
-            if(reason == "SL") return CLOSE_SL;
-            if(reason == "TP") return CLOSE_TP;
-            if(reason == "EMERGENCY") return CLOSE_EMERGENCY;
-            if(reason == "PROFIT_PROTECTION") return CLOSE_PROFIT_PROTECTION;
-            if(StringFind(reason, "Exit Signal") >= 0) return CLOSE_EXIT_SIGNAL;  
-            return CLOSE_MANUAL;
-        }
+    ENUM_CLOSE_REASON StringToCloseReason(string reason) {
+        if(reason == "SL") return CLOSE_SL;
+        if(reason == "TP") return CLOSE_TP;
+        if(reason == "EMERGENCY") return CLOSE_EMERGENCY;
+        if(reason == "PROFIT_PROTECTION") return CLOSE_PROFIT_PROTECTION;
+        if(StringFind(reason, "Exit Signal") >= 0) return CLOSE_EXIT_SIGNAL;  
+        return CLOSE_MANUAL;
+    }
 
     void SavePartialExitState(bool taken) {
         string symbolPrefix = GLOBAL_VAR_PREFIX + m_symbolInfo.GetSymbol() + "_";
@@ -849,6 +797,190 @@ void ProcessExitSignal(const SignalData& signal) {
     }
 }
 
+bool CloseExistingPositions(ENUM_TRADE_SIGNAL newSignal) {
+    if(!ValidateSymbol()) {
+        Logger.Error("Symbol validation failed in CloseExistingPositions");
+        return false;
+    }
+
+    bool allClosed = true;
+    int total = OrdersTotal();
+    int closedCount = 0;
+    double totalProfit = 0;
+    int maxAttempts = 3;
+    RefreshRates(); 
+
+    // Initial position check and logging
+    Logger.Info(StringFormat(
+        "CLOSING POSITIONS FOR REVERSAL" +
+        "\n--------------------" +
+        "\nSymbol: %s" +
+        "\nNew Signal: %s" +
+        "\nTotal Orders: %d",
+        m_symbolInfo.GetSymbol(),
+        newSignal == SIGNAL_BUY ? "BUY" : "SELL",
+        total
+    ));
+
+    // First pass - analyze positions to be closed
+    double totalLotsToClose = 0;
+    double estimatedPL = 0;
+    for(int i = total - 1; i >= 0; i--) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                ENUM_TRADE_SIGNAL currentPos = (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+                if(currentPos != newSignal) {
+                    totalLotsToClose += OrderLots();
+                    estimatedPL += OrderProfit() + OrderSwap() + OrderCommission();
+                }
+            }
+        }
+    }
+
+    Logger.Trade(StringFormat(
+        "POSITION CLOSURE SUMMARY" +
+        "\n--------------------" +
+        "\nTotal Lots to Close: %.2f" +
+        "\nEstimated P/L: %.2f",
+        totalLotsToClose,
+        estimatedPL
+    ));
+
+
+    // Main closure loop with retry mechanism
+    for(int attempt = 0; attempt < maxAttempts; attempt++) {
+        int retryDelay = (attempt == 0) ? 100 : 1000;  // 100ms first retry, 1s for subsequent
+
+        bool anyFailed = false;
+        total = OrdersTotal(); // Refresh total count
+        
+        for(int i = total - 1; i >= 0; i--) {
+            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    ENUM_TRADE_SIGNAL currentPos = (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+
+                    if(currentPos != newSignal) {
+                        double closePrice = OrderType() == OP_BUY ? 
+                            m_symbolInfo.GetBid() : m_symbolInfo.GetAsk();
+
+                        int ticket = OrderTicket();
+                        double lots = OrderLots();
+                        double openPrice = OrderOpenPrice();
+                        
+                        Logger.Trade(StringFormat(
+                            "CLOSING INDIVIDUAL POSITION (Attempt %d/%d)" +
+                            "\n--------------------" +
+                            "\nTicket: %d" +
+                            "\nDirection: %s" +
+                            "\nLots: %.2f" +
+                            "\nOpen Price: %.5f" +
+                            "\nClose Price: %.5f" +
+                            "\nProfit: %.2f" +
+                            "\nSwap: %.2f" +
+                            "\nCommission: %.2f",
+                            attempt + 1, maxAttempts,
+                            ticket,
+                            OrderType() == OP_BUY ? "BUY" : "SELL",
+                            lots,
+                            openPrice,
+                            closePrice,
+                            OrderProfit(),
+                            OrderSwap(),
+                            OrderCommission()
+                        ));
+
+                        bool closed = ClosePosition(ticket, "Signal reversal");
+                        
+                        if(!closed) {
+                            anyFailed = true;
+                            Logger.Error(StringFormat(
+                                "FAILED TO CLOSE POSITION" +
+                                "\n--------------------" +
+                                "\nTicket: %d" +
+                                "\nAttempt: %d/%d" +
+                                "\nError: %d" +
+                                "\nDescription: %s",
+                                ticket,
+                                attempt + 1, maxAttempts,
+                                GetLastError(),
+                                ErrorDescription(GetLastError())
+                            ));
+                        } else {
+                            closedCount++;
+                            totalProfit += OrderProfit() + OrderSwap() + OrderCommission();
+                            Logger.Trade(StringFormat(
+                                "Position closed successfully:" +
+                                "\nTicket: %d" +
+                                "\nProfit: %.2f",
+                                ticket,
+                                OrderProfit() + OrderSwap() + OrderCommission()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no failures in this attempt, break the retry loop
+        if(!anyFailed) {
+            Logger.Info("All positions closed successfully");
+            break;
+        }
+        
+        // If this wasn't the last attempt, wait before retrying
+        if(attempt < maxAttempts - 1) {
+            Logger.Warning(StringFormat(
+                "Some positions failed to close. Retrying in %d ms...",
+                retryDelay
+            ));
+            Sleep(retryDelay);
+        }
+    }
+
+    // Final verification
+    total = OrdersTotal();
+    bool remainingPositions = false;
+    for(int i = 0; i < total; i++) {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                remainingPositions = true;
+                ENUM_TRADE_SIGNAL currentPos = (OrderType() == OP_BUY) ? SIGNAL_BUY : SIGNAL_SELL;
+                Logger.Error(StringFormat(
+                    "Position remains open after closure attempts:" +
+                    "\nTicket: %d" +
+                    "\nType: %s" +
+                    "\nLots: %.2f",
+                    OrderTicket(),
+                    OrderType() == OP_BUY ? "BUY" : "SELL",
+                    OrderLots()
+                ));
+            }
+        }
+    }
+
+    if(remainingPositions) {
+        allClosed = false;
+    }
+
+    // Final closure summary
+    Logger.Trade(StringFormat(
+        "POSITION CLOSURE SUMMARY" +
+        "\n--------------------" +
+        "\nSymbol: %s" +
+        "\nPositions Closed: %d" +
+        "\nAll Positions Closed: %s" +
+        "\nTotal Profit: %.2f" +
+        "\nRemaining Positions: %s",
+        m_symbolInfo.GetSymbol(),
+        closedCount,
+        allClosed ? "YES" : "NO",
+        totalProfit,
+        remainingPositions ? "YES" : "NO"
+    ));
+
+    return allClosed;
+}
+
 bool ClosePartialPosition(int ticket, double lots, string reason = "") {
     if(!OrderSelect(ticket, SELECT_BY_TICKET)) {
         Logger.Error(StringFormat(
@@ -1009,65 +1141,142 @@ bool OpenBuyPosition(double lots, double sl, double tp, string comment, const Si
 }
 
 bool OpenSellPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
-
     if(!m_symbolInfo || !m_riskManager) {
         Logger.Error("Dependencies not initialized in OpenSellPosition");
         return false;
     }
-    
 
-        // Validate symbol
-        if(m_symbolInfo.GetSymbol() != Symbol()) {
-            Logger.Error(StringFormat(
-                "Symbol mismatch in OpenSellPosition - Expected: %s, Got: %s",
-                Symbol(), m_symbolInfo.GetSymbol()));
-            return false;
-        }
+    // Validate symbol
+    if(m_symbolInfo.GetSymbol() != Symbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in OpenSellPosition - Expected: %s, Got: %s",
+            Symbol(), m_symbolInfo.GetSymbol()));
+        return false;
+    }
 
-        if(!CanTrade()) return false;
-        
-        Logger.Debug(StringFormat(
-            "Sell Position Request:" +
-            "\nAwaiting Opposite: %s" +
-            "\nLast Closed Direction: %s",
-            m_awaitingOppositeSignal ? "Yes" : "No",
+    if(!CanTrade()) return false;
+
+    // Log initial trade request state
+    Logger.Debug(StringFormat(
+        "Sell Position Request:" +
+        "\nSymbol: %s" +
+        "\nAwaiting Opposite: %s" +
+        "\nLast Closed Direction: %s" +
+        "\nLots: %.2f" +
+        "\nSL: %.5f" +
+        "\nTP: %.5f",
+        m_symbolInfo.GetSymbol(),
+        m_awaitingOppositeSignal ? "Yes" : "No",
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+        lots,
+        sl,
+        tp
+    ));
+
+    if(!CanOpenNewPosition(SIGNAL_SELL)) {
+        Logger.Warning(StringFormat(
+            "Sell position rejected - Awaiting opposite signal after %s position stop loss",
             m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
         ));
+        return false;
+    }
 
-        if(!CanOpenNewPosition(SIGNAL_SELL)) {
-            Logger.Warning(StringFormat(
-                "Sell position rejected - Awaiting opposite signal after %s position stop loss",
-                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
-            ));
-            return false;
-        }
-
-        // Check for existing sell position
-        if(HasOpenPositionInDirection(SIGNAL_SELL)) {
-            Logger.Warning("Sell position already exists - skipping");
-            return false;
-        }
-
-        // Close any existing buy positions first
-        if(HasOpenPosition()) {
-            if(!CloseExistingPositions(SIGNAL_SELL)) {
-                Logger.Error("Failed to close existing positions before sell");
-                return false;
+    // Close ALL existing positions first
+    if(HasOpenPosition()) {
+        Logger.Info("Checking existing positions before SELL signal execution");
+        
+        // First, log all existing positions
+        int total = OrdersTotal();
+        for(int i = total - 1; i >= 0; i--) {
+            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
+                    Logger.Info(StringFormat(
+                        "Found existing position:" +
+                        "\nTicket: %d" +
+                        "\nType: %s" +
+                        "\nLots: %.2f" +
+                        "\nOpen Price: %.5f" +
+                        "\nSL: %.5f" +
+                        "\nTP: %.5f",
+                        OrderTicket(),
+                        OrderType() == OP_BUY ? "BUY" : "SELL",
+                        OrderLots(),
+                        OrderOpenPrice(),
+                        OrderStopLoss(),
+                        OrderTakeProfit()
+                    ));
+                }
             }
         }
 
-        double price = m_symbolInfo.GetBid();
-        if(!m_symbolInfo.ValidateStopLoss(OP_SELL, price, sl)) {
-            Logger.Error("Invalid stop loss for sell order");
+        Logger.Info("Attempting to close all existing positions");
+        bool allClosed = CloseExistingPositions(SIGNAL_SELL);
+        if(!allClosed) {
+            Logger.Error("Failed to close existing positions before sell");
             return false;
         }
-
-        bool result = ExecuteMarketOrder(OP_SELL, lots, signal.price, sl, tp, comment, signal);
-        if(result) {
-            SaveTradeState(); 
+        
+        // Add a small delay to ensure positions are fully closed
+        Sleep(100);
+        
+        // Double check no positions are left
+        if(HasOpenPosition()) {
+            Logger.Error("Positions still exist after attempted close - aborting new SELL position");
+            return false;
         }
+    }
 
-        return result;
+    // Validate current price and stop loss
+    double currentPrice = m_symbolInfo.GetBid();
+    Logger.Info(StringFormat(
+        "Validating SELL order parameters:" +
+        "\nCurrent Bid: %.5f" +
+        "\nSignal Price: %.5f" +
+        "\nStop Loss: %.5f" +
+        "\nTake Profit: %.5f",
+        currentPrice,
+        signal.price,
+        sl,
+        tp
+    ));
+
+    if(!m_symbolInfo.ValidateStopLoss(OP_SELL, currentPrice, sl)) {
+        Logger.Error(StringFormat(
+            "Invalid stop loss for sell order:" +
+            "\nCurrent Price: %.5f" +
+            "\nProposed SL: %.5f",
+            currentPrice, sl));
+        return false;
+    }
+
+    // Execute the sell order
+    Logger.Info(StringFormat(
+        "Executing SELL order:" +
+        "\nLots: %.2f" +
+        "\nPrice: %.5f" +
+        "\nSL: %.5f" +
+        "\nTP: %.5f" +
+        "\nComment: %s",
+        lots, signal.price, sl, tp, comment
+    ));
+
+    bool result = ExecuteMarketOrder(OP_SELL, lots, signal.price, sl, tp, comment, signal);
+    
+    if(result) {
+        Logger.Info(StringFormat(
+            "SELL position opened successfully:" +
+            "\nLots: %.2f" +
+            "\nEntry: %.5f" +
+            "\nSL: %.5f" +
+            "\nTP: %.5f",
+            lots, signal.price, sl, tp
+        ));
+        SaveTradeState();
+    } else {
+        Logger.Error("Failed to open SELL position");
+    }
+
+    return result;
 }
 
 bool ClosePosition(int ticket, string reason = "") {
