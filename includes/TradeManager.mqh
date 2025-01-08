@@ -1079,65 +1079,134 @@ bool ClosePartialPosition(int ticket, double lots, string reason = "") {
     
     // Trade Execution Methods
 bool OpenBuyPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
-
-     if(!m_symbolInfo || !m_riskManager) {
+    if(!m_symbolInfo || !m_riskManager) {
         Logger.Error("Dependencies not initialized in OpenBuyPosition");
         return false;
     }
 
-        // Validate symbol
-        if(m_symbolInfo.GetSymbol() != Symbol()) {
-            Logger.Error(StringFormat(
-                "Symbol mismatch in OpenBuyPosition - Expected: %s, Got: %s",
-                Symbol(), m_symbolInfo.GetSymbol()));
-            return false;
-        }
+    // Validate symbol
+    if(m_symbolInfo.GetSymbol() != Symbol()) {
+        Logger.Error(StringFormat(
+            "Symbol mismatch in OpenBuyPosition - Expected: %s, Got: %s",
+            Symbol(), m_symbolInfo.GetSymbol()));
+        return false;
+    }
 
-        if(!CanTrade()) return false;
+    if(!CanTrade()) return false;
 
-        Logger.Debug(StringFormat(
-            "Buy Position Request:" +
-            "\nAwaiting Opposite: %s" +
-            "\nLast Closed Direction: %s",
-            m_awaitingOppositeSignal ? "Yes" : "No",
+    Logger.Debug(StringFormat(
+        "Buy Position Request:" +
+        "\nSymbol: %s" +
+        "\nAwaiting Opposite: %s" +
+        "\nLast Closed Direction: %s" +
+        "\nLots: %.2f" +
+        "\nSL: %.5f" +
+        "\nTP: %.5f",
+        m_symbolInfo.GetSymbol(),
+        m_awaitingOppositeSignal ? "Yes" : "No",
+        m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL",
+        lots,
+        sl,
+        tp
+    ));
+
+    if(!CanOpenNewPosition(SIGNAL_BUY)) {
+        Logger.Warning(StringFormat(
+            "Buy position rejected - Awaiting opposite signal after %s position stop loss",
             m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
         ));
+        return false;
+    }
 
-        if(!CanOpenNewPosition(SIGNAL_BUY)) {
-            Logger.Warning(StringFormat(
-                "Buy position rejected - Awaiting opposite signal after %s position stop loss",
-                m_lastClosedDirection == SIGNAL_BUY ? "BUY" : "SELL"
-            ));
+    // First check if we already have a BUY position
+    if(HasOpenPositionInDirection(SIGNAL_BUY)) {
+        Logger.Warning(StringFormat(
+            "Buy position already exists - skipping" +
+            "\nSignal Price: %.5f" +
+            "\nSignal Pattern: %s",
+            signal.price,
+            signal.pattern
+        ));
+        return false;
+    }
+
+    // Then check for opposite positions
+    if(HasOpenPositionInDirection(SIGNAL_SELL)) {
+        Logger.Info(StringFormat(
+            "Found opposite (SELL) position - attempting to close" +
+            "\nNew Signal: BUY" +
+            "\nSignal Price: %.5f" +
+            "\nSignal Pattern: %s",
+            signal.price,
+            signal.pattern
+        ));
+        
+        if(!CloseExistingPositions(SIGNAL_BUY)) {
+            Logger.Error("Failed to close existing SELL positions before BUY");
             return false;
         }
-
-        // Check for existing buy position
-        if(HasOpenPositionInDirection(SIGNAL_BUY)) {
-            Logger.Warning("Buy position already exists - skipping");
-            return false;
-        }
-
-        // Close any existing sell positions first
+        
+        // Add a small delay after closing positions
+        Sleep(100);
+        
+        // Verify no positions remain
         if(HasOpenPosition()) {
-            if(!CloseExistingPositions(SIGNAL_BUY)) {
-                Logger.Error("Failed to close existing positions before buy");
-                return false;
-            }
-        }
-
-        double price = m_symbolInfo.GetAsk();
-        if(!m_symbolInfo.ValidateStopLoss(OP_BUY, price, sl)) {
-            Logger.Error("Invalid stop loss for buy order");
+            Logger.Error("Positions still exist after attempted close - aborting new BUY position");
             return false;
         }
+    }
 
-        bool result = ExecuteMarketOrder(OP_BUY, lots, signal.price, sl, tp, comment, signal);
+    // Validate current price and stop loss
+    double currentPrice = m_symbolInfo.GetAsk();
+    Logger.Info(StringFormat(
+        "Validating BUY order parameters:" +
+        "\nCurrent Ask: %.5f" +
+        "\nSignal Price: %.5f" +
+        "\nStop Loss: %.5f" +
+        "\nTake Profit: %.5f",
+        currentPrice,
+        signal.price,
+        sl,
+        tp
+    ));
 
-        if(result) {
-            SaveTradeState();
-        }
+    if(!m_symbolInfo.ValidateStopLoss(OP_BUY, currentPrice, sl)) {
+        Logger.Error(StringFormat(
+            "Invalid stop loss for buy order:" +
+            "\nCurrent Price: %.5f" +
+            "\nProposed SL: %.5f",
+            currentPrice, sl));
+        return false;
+    }
 
-        return result;
+    // Execute the buy order
+    Logger.Info(StringFormat(
+        "Executing BUY order:" +
+        "\nLots: %.2f" +
+        "\nPrice: %.5f" +
+        "\nSL: %.5f" +
+        "\nTP: %.5f" +
+        "\nComment: %s",
+        lots, signal.price, sl, tp, comment
+    ));
+
+    bool result = ExecuteMarketOrder(OP_BUY, lots, signal.price, sl, tp, comment, signal);
+    
+    if(result) {
+        Logger.Info(StringFormat(
+            "BUY position opened successfully:" +
+            "\nLots: %.2f" +
+            "\nEntry: %.5f" +
+            "\nSL: %.5f" +
+            "\nTP: %.5f",
+            lots, signal.price, sl, tp
+        ));
+        SaveTradeState();
+    } else {
+        Logger.Error("Failed to open BUY position");
+    }
+
+    return result;
 }
 
 bool OpenSellPosition(double lots, double sl, double tp, string comment, const SignalData& signal) {
@@ -1156,7 +1225,6 @@ bool OpenSellPosition(double lots, double sl, double tp, string comment, const S
 
     if(!CanTrade()) return false;
 
-    // Log initial trade request state
     Logger.Debug(StringFormat(
         "Sell Position Request:" +
         "\nSymbol: %s" +
@@ -1181,45 +1249,38 @@ bool OpenSellPosition(double lots, double sl, double tp, string comment, const S
         return false;
     }
 
-    // Close ALL existing positions first
-    if(HasOpenPosition()) {
-        Logger.Info("Checking existing positions before SELL signal execution");
-        
-        // First, log all existing positions
-        int total = OrdersTotal();
-        for(int i = total - 1; i >= 0; i--) {
-            if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
-                if(OrderSymbol() == m_symbolInfo.GetSymbol()) {
-                    Logger.Info(StringFormat(
-                        "Found existing position:" +
-                        "\nTicket: %d" +
-                        "\nType: %s" +
-                        "\nLots: %.2f" +
-                        "\nOpen Price: %.5f" +
-                        "\nSL: %.5f" +
-                        "\nTP: %.5f",
-                        OrderTicket(),
-                        OrderType() == OP_BUY ? "BUY" : "SELL",
-                        OrderLots(),
-                        OrderOpenPrice(),
-                        OrderStopLoss(),
-                        OrderTakeProfit()
-                    ));
-                }
-            }
-        }
+    // First check if we already have a SELL position
+    if(HasOpenPositionInDirection(SIGNAL_SELL)) {
+        Logger.Warning(StringFormat(
+            "Sell position already exists - skipping" +
+            "\nSignal Price: %.5f" +
+            "\nSignal Pattern: %s",
+            signal.price,
+            signal.pattern
+        ));
+        return false;
+    }
 
-        Logger.Info("Attempting to close all existing positions");
-        bool allClosed = CloseExistingPositions(SIGNAL_SELL);
-        if(!allClosed) {
-            Logger.Error("Failed to close existing positions before sell");
+    // Then check for opposite positions
+    if(HasOpenPositionInDirection(SIGNAL_BUY)) {
+        Logger.Info(StringFormat(
+            "Found opposite (BUY) position - attempting to close" +
+            "\nNew Signal: SELL" +
+            "\nSignal Price: %.5f" +
+            "\nSignal Pattern: %s",
+            signal.price,
+            signal.pattern
+        ));
+        
+        if(!CloseExistingPositions(SIGNAL_SELL)) {
+            Logger.Error("Failed to close existing BUY positions before SELL");
             return false;
         }
         
-        // Add a small delay to ensure positions are fully closed
+        // Add a small delay after closing positions
         Sleep(100);
         
-        // Double check no positions are left
+        // Verify no positions remain
         if(HasOpenPosition()) {
             Logger.Error("Positions still exist after attempted close - aborting new SELL position");
             return false;
