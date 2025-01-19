@@ -359,7 +359,7 @@ double CalculatePositionSize(double entryPrice, double stopLoss, int orderType) 
       }
 
       // Apply broker constraints
-      double minLot = MathMax(0.02, MarketInfo(m_symbolInfo.GetSymbol(), MODE_MINLOT));
+      double minLot = MathMax(0.03, MarketInfo(m_symbolInfo.GetSymbol(), MODE_MINLOT));
       double maxLot = MarketInfo(m_symbolInfo.GetSymbol(), MODE_MAXLOT);
       double lotStep = MarketInfo(m_symbolInfo.GetSymbol(), MODE_LOTSTEP);
 
