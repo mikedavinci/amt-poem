@@ -13,13 +13,11 @@
 #define ERR_CUSTOM_CRITICAL          (ERR_CUSTOM_START + 2)
 
 // Tolerance
-#define ENTRY_PRICE_TOLERANCE_PERCENT   1.0  // 1.0% tolerance for entry price
-#define FOREX_ENTRY_TOLERANCE_PERCENT   0.75   // Keep 0.5% for forex
+#define ENTRY_PRICE_TOLERANCE_PERCENT 1.0  // 1.0% tolerance for entry price
+#define FOREX_ENTRY_TOLERANCE_PERCENT   0.5   // Keep 0.5% for forex
 #define BTC_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for BTC
 #define ETH_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for ETH
 #define LTC_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for LTC
-#define XRP_ENTRY_TOLERANCE_PERCENT     2.5   // Allow 2.5% for LTC
-
 
 // Forex Constants
 #define FOREX_CONTRACT_SIZE          100000
@@ -27,17 +25,14 @@
 #define FOREX_DIGITS                 5
 #define FOREX_MARGIN_INITIAL         100000
 
-// Crypto Constants - Only for BTC, ETH, LTC, XRP
-#define CRYPTO_DIGITS_BTC           2
-#define CRYPTO_DIGITS_ETH           2
-#define CRYPTO_DIGITS_LTC           2
-#define CRYPTO_DIGITS_XRP           4
+// Crypto Constants - Only for BTC, ETH, LTC
+#define CRYPTO_DIGITS_BTC           5
+#define CRYPTO_DIGITS_ETH           5
+#define CRYPTO_DIGITS_LTC           5
 #define CRYPTO_CONTRACT_SIZE_DEFAULT 1
-#define CRYPTO_MARGIN_PERCENT_DEFAULT 0.003  // 0.3% for BTC/ETH
+#define CRYPTO_MARGIN_PERCENT_DEFAULT 0.003  // 0.3%
 #define CRYPTO_CONTRACT_SIZE_LTC    100
 #define CRYPTO_MARGIN_PERCENT_LTC   0.01     // 1.0%
-#define CRYPTO_CONTRACT_SIZE_XRP    10000
-#define CRYPTO_MARGIN_PERCENT_XRP   0.01    // 1.0% for XRP
 
 // Risk Management Constants
 #define DEFAULT_RISK_PERCENT        5.0  
@@ -113,20 +108,20 @@
 #define PARTIAL_EXIT_PERCENT 25.0
 #define REMAINING_VOLUME_PERCENT 75.0
 
-// CRYPTO Market Conditions (More volatile, needs stronger confirmations)
-#define CRYPTO_VOLUME_MA_PERIOD    8      // Was 13, now 8 - More aggressive for early volume surge detection
-#define CRYPTO_MIN_VOLUME_RATIO    0.95   // Was 0.85, now 0.95 - More conservative to ensure real volume
-#define CRYPTO_TREND_FAST_MA       5      // Was 8, now 5 - Aggressive for early trend detection
-#define CRYPTO_TREND_SLOW_MA       13     // Was 21, now 13 - Faster trend confirmation
-#define CRYPTO_MIN_TREND_STRENGTH  0.5    // Was 0.4, now 0.5 - More conservative trend requirement
-#define CRYPTO_ADX_PERIOD         10     // Was 14, now 10 - Faster trend strength detection
-#define CRYPTO_MIN_ADX            35     // Was 30, now 35 - More conservative ADX requirement
+// Crypto Market Conditions (BTCUSD, ETHUSD, LTCUSD) 
+#define CRYPTO_VOLUME_MA_PERIOD    20     // Volume Moving Average period
+#define CRYPTO_MIN_VOLUME_RATIO    0.7    // Minimum ratio to average volume
+#define CRYPTO_TREND_FAST_MA       13     // Fast MA for trend detection
+#define CRYPTO_TREND_SLOW_MA       34     // Slow MA for trend detection
+#define CRYPTO_MIN_TREND_STRENGTH  0.3    // Minimum trend strength percentage
+#define CRYPTO_ADX_PERIOD         20     // ADX period for trend strength
+#define CRYPTO_MIN_ADX            25     // Minimum ADX value for trend
 
-// FOREX Market Conditions (More structured, can be more responsive)
-#define FOREX_VOLUME_MA_PERIOD     5      // Was 10, now 5 - Aggressive for early volume detection
-#define FOREX_MIN_VOLUME_RATIO     1.0    // Was 0.9, now 1.0 - Conservative to ensure significant volume
-#define FOREX_TREND_FAST_MA        3      // Was 5, now 3 - Very aggressive for early trend detection
-#define FOREX_TREND_SLOW_MA        8      // Was 13, now 8 - Faster trend confirmation
-#define FOREX_MIN_TREND_STRENGTH   0.25   // Was 0.2, now 0.25 - Slightly more conservative
-#define FOREX_ADX_PERIOD          8      // Was 10, now 8 - Faster trend strength detection
-#define FOREX_MIN_ADX             28     // Was 25, now 28 - More conservative
+// Forex Market Conditions
+#define FOREX_VOLUME_MA_PERIOD     14     // Shorter for forex due to more consistent volume
+#define FOREX_MIN_VOLUME_RATIO     0.8    // Forex needs higher volume confirmation
+#define FOREX_TREND_FAST_MA        8      // Faster MA for forex
+#define FOREX_TREND_SLOW_MA        21     // Standard slow MA for forex
+#define FOREX_MIN_TREND_STRENGTH   0.15   // Lower due to forex having smaller moves
+#define FOREX_ADX_PERIOD          14     // Standard forex ADX period
+#define FOREX_MIN_ADX             20     // Standard minimum ADX for forex

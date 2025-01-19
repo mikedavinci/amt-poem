@@ -945,7 +945,8 @@ bool ParseSignal(string response, SignalData &signal) {
             string baseTicker = StringSubstr(signalStr, startQuote, endQuote - startQuote);
             signal.ticker = (StringFind(baseTicker, "BTC") >= 0 || 
                            StringFind(baseTicker, "ETH") >= 0 ||
-                           StringFind(baseTicker, "LTC") >= 0) ? 
+                           StringFind(baseTicker, "LTC") >= 0 ||
+                           StringFind(baseTicker, "XRP") >= 0) ? 
                            baseTicker : baseTicker + "+";
         }
     }

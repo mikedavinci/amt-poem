@@ -278,6 +278,9 @@ void LoadTradeState() {
         else if(StringFind(symbol, "LTC") >= 0) {
             tolerance = LTC_ENTRY_TOLERANCE_PERCENT;
         }
+        else if(StringFind(symbol, "XRP") >= 0) {
+            tolerance = XRP_ENTRY_TOLERANCE_PERCENT;
+        }
 
         double deviation = MathAbs(1 - (currentPrice / signalPrice)) * 100;
 

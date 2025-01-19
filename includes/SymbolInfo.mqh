@@ -53,6 +53,10 @@ private:
             m_symbolType = SYMBOL_TYPE_CRYPTO;
             m_digits = CRYPTO_DIGITS_LTC;
         }
+        else if(StringFind(m_symbol, "XRP") >= 0) {
+            m_symbolType = SYMBOL_TYPE_CRYPTO;
+            m_digits = CRYPTO_DIGITS_XRP;
+        }
         else {
             m_symbolType = SYMBOL_TYPE_FOREX;
             m_digits = FOREX_DIGITS;
@@ -66,6 +70,9 @@ private:
             if(StringFind(m_symbol, "LTC") >= 0) {
                 m_contractSize = CRYPTO_CONTRACT_SIZE_LTC;
                 m_marginPercent = CRYPTO_MARGIN_PERCENT_LTC;
+            } else if(StringFind(m_symbol, "XRP") >= 0) {
+                m_contractSize = CRYPTO_CONTRACT_SIZE_XRP;
+                m_marginPercent = CRYPTO_MARGIN_PERCENT_XRP;
             } else {
                 m_contractSize = CRYPTO_CONTRACT_SIZE_DEFAULT;
                 m_marginPercent = CRYPTO_MARGIN_PERCENT_DEFAULT;
